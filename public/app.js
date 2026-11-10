@@ -36,7 +36,7 @@ $('#modal .modal-x').onclick = closeModal;
 $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
 const curLoc = () => S.me && S.me.locations.find(l => l.id === S.loc);
 const isAdmin = () => !!(curLoc() && curLoc().is_admin);
-const isOwner = () => S.me && S.me.user.role === 'owner';
+const isOwner = () => !!S.me && ['admin', 'owner'].includes(S.me.user.role); // будь-який адміністратор
 function setLang(l) { S.lang = l; localStorage.setItem('lang', l); document.documentElement.lang = l; if (S.me) api('POST', '/api/me/lang', { lang: l }); }
 
 // ---------------- boot ----------------
@@ -79,14 +79,14 @@ function renderPick() {
 async function logout() { await api('POST', '/api/logout'); S.me = null; sessionStorage.clear(); renderLogin(); }
 
 const PAGES = {
-  home: { fn: pageHome }, schedule: { fn: pageSchedule }, hours: { fn: pageHours }, requests: { fn: pageRequests }, notes: { fn: pageNotes },
+  home: { fn: pageHome }, schedule: { fn: pageSchedule }, avail: { fn: pageMyAvail }, disposition: { fn: pageDisposition, admin: true }, hours: { fn: pageHours }, requests: { fn: pageRequests }, notes: { fn: pageNotes },
   warnings: { fn: pageWarnings, admin: true }, shiftcards: { fn: pageShiftCards, admin: true }, reports: { fn: pageReports, admin: true }, workers: { fn: pageWorkers, admin: true },
   locations: { fn: pageLocations, owner: true }, months: { fn: pageMonths, admin: true }, audit: { fn: pageAudit, admin: true },
   settings: { fn: pageSettings }, notifications: { fn: pageNotifications },
 };
 function navHtml(page) {
-  const items = [['home', t('nav_home')], ['schedule', t('nav_schedule')], ['hours', t('nav_hours')], ['requests', t('nav_requests')], ['notes', t('nav_notes')]];
-  if (isAdmin()) items.push(['shiftcards', t('nav_shiftcards')], ['warnings', t('nav_warnings')], ['reports', t('nav_reports')], ['workers', t('nav_workers')], ['months', t('nav_months')], ['audit', t('nav_audit')]);
+  const items = [['home', t('nav_home')], ['schedule', t('nav_schedule')], ['avail', t('nav_avail')], ['hours', t('nav_hours')], ['requests', t('nav_requests')], ['notes', t('nav_notes')]];
+  if (isAdmin()) items.push(['disposition', t('nav_disposition')], ['shiftcards', t('nav_shiftcards')], ['warnings', t('nav_warnings')], ['reports', t('nav_reports')], ['workers', t('nav_workers')], ['months', t('nav_months')], ['audit', t('nav_audit')]);
   if (isOwner()) items.push(['locations', t('nav_locations')]);
   items.push(['settings', t('nav_settings')]);
   return items.map(([k, l]) => `<a href="#/${k}" class="${k === page ? 'on' : ''}">${l}</a>`).join('');
@@ -180,7 +180,7 @@ async function pageSchedule(el) {
         const st = c ? c.start : ds, en = c ? c.end : de;
         const custom = c && sl !== 'dl' && (c.start !== ds || c.end !== de);
         html += `<td data-l="${lab}" class="${sl === 'dl' && d.delivery_day ? 'dl-day' : ''}"><div class="cell ${c && c.user_id ? '' : 'empty'}" data-date="${d.date}" data-slot="${sl}">
-          <div class="row" style="gap:4px;flex-wrap:nowrap">${w ? `<span class="excl" title="${esc(w.text)}">!</span>` : ''}<select class="who" ${d.closed ? 'disabled' : ''}><option value="">—</option>${S.workers.map(u => `<option value="${u.id}" ${c && c.user_id === u.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}${c && c.user_id && !S.workers.some(u => u.id === c.user_id) ? `<option value="${c.user_id}" selected>${esc(c.name)}</option>` : ''}</select>
+          <div class="row" style="gap:4px;flex-wrap:nowrap">${w ? `<span class="excl" title="${esc(w.text)}">!</span>` : ''}<select class="who" ${d.closed ? 'disabled' : ''}><option value="">—</option>${sl !== 'dl' && v.avail ? workerOptionsByAvail(v.avail, d.date, st, en, c && c.user_id) : S.workers.map(u => `<option value="${u.id}" ${c && c.user_id === u.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}${c && c.user_id && !S.workers.some(u => u.id === c.user_id) ? `<option value="${c.user_id}" selected>${esc(c.name)}</option>` : ''}</select>
           ${sl !== 'dl' ? `<button class="sm tbtn" type="button" title="${t('custom_time')}">⏱</button>` : ''}</div>
           ${sl !== 'dl' ? `<div class="times" style="${custom ? '' : 'display:none'}"><input type="time" class="st" value="${hm(st)}" ${d.closed ? 'disabled' : ''}>–<input type="time" class="en" value="${hm(en)}" ${d.closed ? 'disabled' : ''}></div>` : ''}
           ${c && c.cancelled ? `<span class="small red">✕ ${t('cancelled')}</span>` : ''}
@@ -215,6 +215,8 @@ async function pageSchedule(el) {
   });
   const collect = () => $$('.cell', el).map(c => ({ date: c.dataset.date, slot: c.dataset.slot, user_id: $('.who', c).value || null, start: $('.st', c) ? $('.st', c).value : null, end: $('.en', c) ? $('.en', c).value : null }));
   const save = async publish => {
+    const warns = v.avail ? availWarnings(v.avail, collect()) : [];
+    if (warns.length && !confirm(t('av_warn_confirm') + '\n\n' + warns.join('\n'))) return;
     try { await api('PUT', `/api/schedule/${S.loc}`, { week: schWeek, cells: collect(), publish }); toast(publish ? t('published_ok') : t('saved')); pageSchedule(el); }
     catch (e) { $('#sch-err').innerHTML = errBox(e); $('#sch-err').scrollIntoView({ behavior: 'smooth' }); }
   };
@@ -474,7 +476,7 @@ async function pageWorkers(el) {
   const adminLocs = locs.filter(l => l.is_admin);
   el.innerHTML = `<div class="row"><h1 class="grow">${t('nav_workers')}</h1><button class="pri" id="uadd">+ ${t('add_worker')}</button></div>
     <div class="tbl-wrap"><table class="t"><thead><tr><th>${t('name')}</th><th>${t('login')}</th><th>${t('c_locations')}</th>${rates ? `<th>${t('c_rate')}</th><th>${t('c_trate')}</th>` : ''}<th>Telegram</th><th>${t('status')}</th><th></th></tr></thead><tbody>
-    ${users.map(u => `<tr class="${u.active ? '' : 'mute'}"><td><b>${esc(u.name)}</b>${u.role === 'owner' ? ' ★' : ''}</td><td>${esc(u.login)}</td><td>${u.locations.map(id => esc((locs.find(l => l.id === id) || {}).name || '#' + id)).join(', ')}</td>
+    ${users.map(u => `<tr class="${u.active ? '' : 'mute'}"><td><b>${esc(u.name)}</b>${['admin', 'owner'].includes(u.role) ? ` <span class="pill pub">${t('admin')}</span>` : ''}</td><td>${esc(u.login)}</td><td>${u.locations.map(id => esc((locs.find(l => l.id === id) || {}).name || '#' + id)).join(', ')}</td>
       ${rates ? `<td class="n">${u.rate != null ? zl(u.rate) : ''}</td><td class="n">${u.training_rate != null ? zl(u.training_rate) : ''}</td>` : ''}<td>${u.tg_linked ? '✓' : '—'}</td><td>${u.active ? t('active') : t('inactive')}</td><td><button class="sm" data-edit="${u.id}">✎</button></td></tr>`).join('')}
     </tbody></table></div><p class="small mute">${t('workers_help')}</p>`;
   const edit = u => {
@@ -485,13 +487,13 @@ async function pageWorkers(el) {
       <label class="f"><span>${isNew ? t('password') : t('new_password_opt')}</span><input id="up" type="text" autocomplete="new-password"></label>
       <div class="f"><span class="mute small">${t('c_locations')}</span><br>${adminLocs.map(l => `<label style="margin-right:12px"><input type="checkbox" class="ulc" value="${l.id}" ${u.locations.includes(l.id) ? 'checked' : ''}> ${esc(l.name)}</label>`).join('')}</div>
       ${rates ? `<div class="row"><label class="f grow"><span>${t('c_rate')} (zł/${t('h')})</span><input id="ur" type="number" step="0.1" value="${u.rate ?? ''}"></label><label class="f grow"><span>${t('c_trate')} (zł/${t('h')})</span><input id="utr" type="number" step="0.1" value="${u.training_rate ?? ''}"></label></div>` : ''}
-      ${isOwner() && !isNew && u.role !== 'owner' ? `<label class="f"><input type="checkbox" id="ucr" ${u.can_rates ? 'checked' : ''}> ${t('allow_rates')}</label>` : ''}
+      ${isOwner() && u.id !== S.me.user.id ? `<label class="f"><input type="checkbox" id="urole" ${['admin', 'owner'].includes(u.role) ? 'checked' : ''}> ${t('is_admin_role')} <span class="small mute">(${t('is_admin_help')})</span></label>` : ''}
       ${!isNew ? `<label class="f"><input type="checkbox" id="ua" ${u.active ? 'checked' : ''}> ${t('active')} <span class="small mute">(${t('deactivate_help')})</span></label>` : ''}
       <div id="uerr"></div><div class="row end"><button onclick="closeModal()">${t('cancel')}</button><button class="pri" id="uok">${t('save')}</button></div>`);
     $('#uok', b).onclick = async () => {
       const body = { name: $('#un', b).value, password: $('#up', b).value || undefined, locations: $$('.ulc', b).filter(x => x.checked).map(x => Number(x.value)) };
       if (rates) { body.rate = Number($('#ur', b).value); body.training_rate = Number($('#utr', b).value); }
-      if ($('#ucr', b)) body.can_rates = $('#ucr', b).checked;
+      if ($('#urole', b)) body.role = $('#urole', b).checked ? 'admin' : 'user';
       if ($('#ua', b)) body.active = $('#ua', b).checked;
       try { if (isNew) { body.login = $('#ul', b).value; await api('POST', '/api/users', body); } else await api('PUT', `/api/users/${u.id}`, body); closeModal(); toast(t('saved')); await loadWorkers(); pageWorkers(el); }
       catch (e) { $('#uerr', b).innerHTML = errBox(e); }
@@ -548,11 +550,12 @@ async function pageAudit(el) {
 // ---------------- SETTINGS ----------------
 async function pageSettings(el) {
   const u = S.me.user;
-  const cats = ['schedule', 'shift', 'decision', 'money', 'note', 'request', 'reminder'];
+  const cats = ['schedule', 'shift', 'decision', 'money', 'avail', 'note', 'request', 'reminder'];
   el.innerHTML = `<h1>${t('nav_settings')}</h1>
     <div class="card"><h2 style="margin-top:0">${t('language')}</h2>${langSeg()}</div>
     <div class="card"><h2 style="margin-top:0">Telegram</h2>${u.tg_linked ? `<p>✓ ${t('tg_linked')}</p><button id="tgun">${t('tg_unlink')}</button>` : `<p class="mute">${t('tg_help')}</p><button class="pri" id="tgl">${t('tg_link')}</button><div id="tgout"></div>`}
-      <h2>${t('notif_settings')}</h2>${cats.map(c => `<label class="f"><input type="checkbox" class="nc" value="${c}" ${u.notify[c] === false ? '' : 'checked'}> ${t('ncat_' + c)}</label>`).join('')}</div>
+      <h2>${t('notif_settings')}</h2>${cats.map(c => `<label class="f"><input type="checkbox" class="nc" value="${c}" ${u.notify[c] === false ? '' : 'checked'}> ${t('ncat_' + c)}</label>`).join('')}
+      ${isOwner() ? `<h2>${t('notif_locations')}</h2><p class="small mute">${t('notif_locations_help')}</p>${S.me.locations.map(l => { const home = l.admin_id === u.id || l.deputy_id === u.id; return `<label class="f"><input type="checkbox" class="nl" value="${l.id}" ${home ? 'checked disabled' : ((u.notify.locs || []).includes(l.id) ? 'checked' : '')}> ${esc(l.name)}${home ? ` <span class="small mute">(${t('notif_home_loc')})</span>` : ''}</label>`; }).join('')}` : ''}</div>
     <div class="card"><h2 style="margin-top:0">${t('change_password')}</h2><label class="f"><span>${t('old_password')}</span><input type="password" id="po"></label><label class="f"><span>${t('new_password')}</span><input type="password" id="pn"></label><div id="perr"></div><button id="psave">${t('save')}</button></div>
     <div class="card"><button id="lo2">${t('logout')}</button></div>`;
   bindLang(route);
@@ -561,7 +564,8 @@ async function pageSettings(el) {
     $('#tgout', el).innerHTML = r.link ? `<p><a class="pri" href="${r.link}" target="_blank" rel="noopener">${t('tg_open_bot')}</a></p><p class="small mute">${t('tg_after')}</p>` : `<div class="warnbox">${t('tg_not_configured')}</div>`;
   };
   if ($('#tgun', el)) $('#tgun', el).onclick = async () => { await api('POST', '/api/me/tg-unlink'); await refreshMe(); pageSettings(el); };
-  $$('.nc', el).forEach(cb => cb.onchange = async () => { const o = {}; $$('.nc', el).forEach(x => { if (!x.checked) o[x.value] = false; }); await api('POST', '/api/me/notify', o); await refreshMe(); toast(t('saved')); });
+  const saveNotify = async () => { const o = {}; $$('.nc', el).forEach(x => { if (!x.checked) o[x.value] = false; }); if ($$('.nl', el).length) o.locs = $$('.nl', el).filter(x => x.checked && !x.disabled).map(x => Number(x.value)); await api('POST', '/api/me/notify', o); await refreshMe(); toast(t('saved')); };
+  $$('.nc, .nl', el).forEach(cb => cb.onchange = saveNotify);
   $('#psave', el).onclick = async () => { try { await api('POST', '/api/me/password', { old: $('#po', el).value, password: $('#pn', el).value }); toast(t('saved')); $('#po', el).value = $('#pn', el).value = ''; } catch (e) { $('#perr', el).innerHTML = errBox(e); } };
   $('#lo2', el).onclick = logout;
 }
@@ -647,6 +651,155 @@ async function pageShiftCards(el) {
   $$('[data-short]', el).forEach(btn => btn.onclick = () => { const c = card(btn.dataset.short); moneyModal({ kind: 'shortage', shift_id: c.id, user_id: c.user_id, shift_text: `${ddmm(cardDate)} ${slotName(c.slot)} ${hm(c.start)}–${hm(c.end)} · ${c.name}` }, reload); });
   $$('[data-bonus]', el).forEach(btn => btn.onclick = () => { const c = card(btn.dataset.bonus); moneyModal({ kind: 'bonus', user_id: c.user_id, date: cardDate }, reload); });
   $$('[data-mdel]', el).forEach(btn => btn.onclick = async () => { if (!confirm(t('delete_q'))) return; try { await api('DELETE', `/api/money/${btn.dataset.mdel}`); reload(); } catch (e) { toast(e.message); } });
+}
+
+// ---------------- ДИСПОЗИЦІЯ (доступність) ----------------
+const AV_KINDS = ['all', 's1', 's2', 'rs', 'from', 'to', 'range', 'no'];
+const avDesc = e => {
+  if (!e) return t('av_none');
+  if (e.kind === 'from') return t('av_btn_from').replace('…', hm(e.start));
+  if (e.kind === 'to') return t('av_btn_to').replace('…', hm(e.end));
+  if (e.kind === 'range') return t('av_btn_range').replace('…', hm(e.start)).replace('…', hm(e.end));
+  return t('av_' + e.kind);
+};
+const avClass = e => !e ? 'av-none' : e.kind === 'all' ? 'av-full' : e.kind === 'no' ? 'av-no' : 'av-part';
+function avInterval(e, date) {
+  if (!e || e.kind === 'no') return null;
+  if (e.kind === 'all') return [0, 1440];
+  if (['s1', 's2', 'rs'].includes(e.kind)) return DEF(date, e.kind);
+  if (e.kind === 'from') return [e.start, 1440];
+  if (e.kind === 'to') return [0, e.end];
+  return [e.start, e.end];
+}
+/** full | partial | no | none — чи може працівник на інтервал [s, en] */
+function avCoverage(e, date, s, en) {
+  if (!e) return 'none';
+  const iv = avInterval(e, date);
+  if (!iv) return 'no';
+  if (iv[0] <= s && iv[1] >= en) return 'full';
+  if (iv[0] < en && iv[1] > s) return 'partial';
+  return 'no';
+}
+function workerOptionsByAvail(avail, date, s, en, selected) {
+  const groups = { full: [], partial: [], none: [], no: [] };
+  for (const u of S.workers) { const e = (avail[u.id] || {})[date]; groups[avCoverage(e, date, s, en)].push({ u, e }); }
+  const opt = ({ u, e }, g) => `<option value="${u.id}" ${u.id === selected ? 'selected' : ''}>${g === 'full' ? '✅ ' : g === 'partial' ? '🟡 ' : g === 'no' ? '⛔ ' : '▫️ '}${esc(u.name)}${g === 'partial' || g === 'no' ? ' — ' + esc(avDesc(e)) : ''}</option>`;
+  return ['full', 'partial', 'none', 'no'].filter(g => groups[g].length).map(g => `<optgroup label="${t('av_g_' + g)}">${groups[g].map(x => opt(x, g)).join('')}</optgroup>`).join('');
+}
+function availWarnings(avail, cells) {
+  const out = [];
+  for (const c of cells) {
+    if (!c.user_id || c.slot === 'dl') continue;
+    const [ds, de] = DEF(c.date, c.slot);
+    const s = parseHM(c.start) ?? ds, en = parseHM(c.end) ?? de;
+    const e = (avail[c.user_id] || {})[c.date];
+    const cov = avCoverage(e, c.date, s, en);
+    if (cov === 'no' || cov === 'partial') {
+      const name = (S.workers.find(u => u.id === Number(c.user_id)) || {}).name || '?';
+      out.push(`• ${ddmm(c.date)} ${slotName(c.slot)} ${hm(s)}–${hm(en)}: ${name} — ${avDesc(e)}`);
+    }
+  }
+  return out;
+}
+/** Форма вибору варіанту доступності (8 кнопок + час + коментар). */
+function availEditor(box, entry) {
+  let kind = entry ? entry.kind : null;
+  box.innerHTML = `<div class="avbtns">${AV_KINDS.map(k => `<button type="button" data-k="${k}" class="${k === kind ? 'on' : ''} avk-${k}">${t('av_btn_' + k)}</button>`).join('')}</div>
+    <div class="row avtimes" style="margin-top:6px"><label class="avs">${t('av_from')} <input type="time" class="avstart" value="${entry && entry.start != null ? hm(entry.start) : '12:00'}"></label>
+    <label class="ave">${t('av_to')} <input type="time" class="avend" value="${entry && entry.end != null ? hm(entry.end) : '18:00'}"></label></div>
+    <input class="avc" maxlength="200" placeholder="${t('av_comment')}" value="${esc(entry && entry.comment || '')}" style="width:100%;margin-top:6px">`;
+  const sync = () => {
+    $$('.avbtns button', box).forEach(b => b.classList.toggle('on', b.dataset.k === kind));
+    $('.avs', box).style.display = kind === 'from' || kind === 'range' ? '' : 'none';
+    $('.ave', box).style.display = kind === 'to' || kind === 'range' ? '' : 'none';
+  };
+  $$('.avbtns button', box).forEach(b => b.onclick = () => { kind = b.dataset.k; sync(); });
+  sync();
+  return () => kind ? { kind, start: $('.avstart', box).value, end: $('.avend', box).value, comment: $('.avc', box).value } : null;
+}
+const dlText = d => `${t('dow_full_' + d.dow)} ${ddmm(d.date)} ${d.time}`;
+
+let myAvWeek = null;
+async function pageMyAvail(el) {
+  const r = await api('GET', `/api/my/avail${myAvWeek ? '?week=' + myAvWeek : ''}`);
+  myAvWeek = r.week;
+  const end = addDays(r.week, 6);
+  let html = `<div class="row" style="justify-content:space-between"><h1>${t('nav_avail')}: ${ddmm(r.week)} – ${ddmm(end)}</h1>
+    <div class="row"><button id="aw1">‹</button><button id="aw2">›</button></div></div>`;
+  if (!r.has_locations) { el.innerHTML = html + `<div class="card mute">${t('err_avail_no_locations')}</div>`; bind(); return; }
+  html += `<div class="${r.editable ? 'okbox' : 'warnbox'}">${r.editable ? t('av_deadline_info', { d: dlText(r.deadline) }) : t('av_deadline_passed', { d: dlText(r.deadline) })}</div>
+    <p class="small mute">${t('av_your_locations')}: ${r.locations.map(esc).join(', ')}</p>`;
+  html += r.days.map(d => `<div class="card ${d.dow === 6 ? 'sunbox' : ''}" data-date="${d.date}"><div class="row"><b class="grow">${t('dow_full_' + d.dow)} ${ddmm(d.date)}</b>
+      <span class="pill ${avClass(d.entry)}">${esc(avDesc(d.entry))}</span></div>
+      ${d.entry && d.entry.comment ? `<div class="small mute">💬 ${esc(d.entry.comment)}</div>` : ''}
+      ${r.editable ? `<div class="aved" style="margin-top:8px"></div><div class="row end" style="margin-top:6px"><button class="pri sm avsave">${t('save')}</button></div>`
+        : `<div class="row end" style="margin-top:6px"><button class="sm avreq">${t('av_change_request')}</button></div>`}</div>`).join('');
+  el.innerHTML = html;
+  bind();
+  for (const d of r.days) {
+    const card = $(`.card[data-date="${d.date}"]`, el);
+    if (r.editable) {
+      const get = availEditor($('.aved', card), d.entry);
+      $('.avsave', card).onclick = async () => { const v = get(); if (!v) return toast(t('err_avail_kind')); try { await api('PUT', '/api/my/avail', { date: d.date, ...v }); toast(t('saved')); pageMyAvail(el); } catch (e) { toast(e.message); } };
+    } else $('.avreq', card).onclick = () => {
+      const b = modal(`<h2>${t('av_change_request')}: ${t('dow_full_' + d.dow)} ${ddmm(d.date)}</h2><p class="small mute">${t('av_now')}: ${esc(avDesc(d.entry))}</p><div id="ared"></div><div id="aerr"></div>
+        <div class="row end" style="margin-top:10px"><button onclick="closeModal()">${t('cancel')}</button><button class="pri" id="aok">${t('send_request')}</button></div>`);
+      const get = availEditor($('#ared', b), d.entry);
+      $('#aok', b).onclick = async () => { const v = get(); if (!v) return; try { await api('POST', '/api/requests', { location_id: S.loc, type: 'avail', date: d.date, ...v }); closeModal(); toast(t('request_sent')); } catch (e) { $('#aerr', b).innerHTML = errBox(e); } };
+    };
+  }
+  function bind() {
+    $('#aw1', el).onclick = () => { myAvWeek = addDays(myAvWeek, -7); pageMyAvail(el); };
+    $('#aw2', el).onclick = () => { myAvWeek = addDays(myAvWeek, 7); pageMyAvail(el); };
+  }
+}
+
+let dispWeek = null; const dispFilter = { day: '', slot: '' };
+async function pageDisposition(el) {
+  const [r, cfg] = await Promise.all([api('GET', `/api/avail/${S.loc}${dispWeek ? '?week=' + dispWeek : ''}`), api('GET', '/api/avail/settings')]);
+  dispWeek = r.week;
+  const end = addDays(r.week, 6);
+  const filtered = () => {
+    if (!dispFilter.day || !dispFilter.slot) return '';
+    const date = dispFilter.day; const [s, en] = DEF(date, dispFilter.slot);
+    const g = { full: [], partial: [], none: [], no: [] };
+    for (const w of r.workers) { const e = r.days.find(d => d.date === date).cells[w.id]; g[avCoverage(e, date, s, en)].push(w.name + (e && e.kind !== 'all' ? ` (${avDesc(e)})` : '')); }
+    return `<div class="card"><b>${t('dow_full_' + dow(date))} ${ddmm(date)}, ${slotName(dispFilter.slot)}:</b>
+      ${['full', 'partial', 'none', 'no'].map(k => `<div class="small"><span class="pill av-${k === 'full' ? 'full' : k === 'partial' ? 'part' : k}">${t('av_g_' + k)}</span> ${g[k].map(esc).join(', ') || '—'}</div>`).join('')}</div>`;
+  };
+  el.innerHTML = `<div class="row" style="justify-content:space-between"><h1>${t('nav_disposition')}: ${ddmm(r.week)} – ${ddmm(end)}</h1>
+      <div class="row"><button id="dw1">‹</button><button id="dw0">${t('next_week')}</button><button id="dw2">›</button></div></div>
+    <div class="card"><div class="row"><span>${t('av_deadline')}:</span><select id="ddow">${[0, 1, 2, 3, 4, 5, 6].map(i => `<option value="${i}" ${cfg.dow === i ? 'selected' : ''}>${t('dow_full_' + i)}</option>`).join('')}</select>
+      <input type="time" id="dtime" value="${cfg.time}"><button id="dsave" class="sm">${t('save')}</button>
+      <span class="small mute">${t('av_deadline_for_week', { d: dlText(r.deadline) })} · ${r.open ? t('av_open') : t('av_closed')}</span></div></div>
+    <div class="row" style="margin-bottom:8px"><span>${t('av_filter')}:</span><select id="fday"><option value="">— ${t('day')} —</option>${r.days.map(d => `<option value="${d.date}" ${dispFilter.day === d.date ? 'selected' : ''}>${t('dow_full_' + d.dow)} ${ddmm(d.date)}</option>`).join('')}</select>
+      <select id="fslot"><option value="">— ${t('c_slot')} —</option>${['s1', 's2', 'rs'].map(sl => `<option value="${sl}" ${dispFilter.slot === sl ? 'selected' : ''}>${slotName(sl)}</option>`).join('')}</select>
+      <span class="small"><span class="pill av-full">${t('av_all')}</span> <span class="pill av-part">${t('av_partial')}</span> <span class="pill av-no">${t('av_no')}</span> <span class="pill av-none">${t('av_none')}</span></span></div>
+    <div id="fout">${filtered()}</div>
+    <div class="tbl-wrap"><table class="t avtable"><thead><tr><th>${t('day')}</th>${r.workers.map(w => `<th>${esc(w.name)}<div class="row" style="gap:4px;margin-top:4px"><button class="sm" data-copy="${w.id}" title="${t('av_copy_prev')}">⧉</button><button class="sm" data-fill="${w.id}" title="${t('av_fill_week')}">▤</button></div></th>`).join('')}</tr></thead><tbody>
+    ${r.days.map(d => `<tr class="${d.dow === 6 ? 'sun' : ''}"><td style="white-space:nowrap"><b>${t('dow_' + d.dow)}</b> ${ddmm(d.date)}</td>${r.workers.map(w => { const e = d.cells[w.id]; return `<td class="${avClass(e)} avcell" data-u="${w.id}" data-d="${d.date}" title="${e ? esc((e.comment || '') + ' — ' + e.updated_name) : ''}">${esc(avDesc(e))}${e && e.comment ? ' 💬' : ''}</td>`; }).join('')}</tr>`).join('')}
+    </tbody></table></div><p class="small mute">${t('av_admin_help')}</p>`;
+  const go = w => { dispWeek = w; pageDisposition(el); };
+  $('#dw1', el).onclick = () => go(addDays(dispWeek, -7)); $('#dw2', el).onclick = () => go(addDays(dispWeek, 7)); $('#dw0', el).onclick = () => go(null);
+  $('#dsave', el).onclick = async () => { try { await api('PUT', '/api/avail/settings', { dow: Number($('#ddow', el).value), time: $('#dtime', el).value }); toast(t('saved')); pageDisposition(el); } catch (e) { toast(e.message); } };
+  $('#fday', el).onchange = e => { dispFilter.day = e.target.value; $('#fout', el).innerHTML = filtered(); };
+  $('#fslot', el).onchange = e => { dispFilter.slot = e.target.value; $('#fout', el).innerHTML = filtered(); };
+  const wname = id => (r.workers.find(w => w.id === Number(id)) || {}).name;
+  $$('.avcell', el).forEach(td => td.onclick = () => {
+    const date = td.dataset.d, uid = td.dataset.u; const e = r.days.find(d => d.date === date).cells[uid];
+    const b = modal(`<h2>${esc(wname(uid))}: ${t('dow_full_' + dow(date))} ${ddmm(date)}</h2>${e ? `<p class="small mute">${t('av_changed_by')}: ${esc(e.updated_name)}, ${lts(e.updated_at)}</p>` : ''}<div id="ed"></div><div id="eerr"></div>
+      <div class="row end" style="margin-top:10px">${e ? `<button class="danger" id="eclr">${t('av_clear')}</button>` : ''}<button onclick="closeModal()">${t('cancel')}</button><button class="pri" id="eok">${t('save')}</button></div>`);
+    const get = availEditor($('#ed', b), e);
+    $('#eok', b).onclick = async () => { const v = get(); if (!v) return; try { await api('PUT', `/api/avail/user/${uid}`, { date, ...v }); closeModal(); toast(t('saved')); pageDisposition(el); } catch (er) { $('#eerr', b).innerHTML = errBox(er); } };
+    if ($('#eclr', b)) $('#eclr', b).onclick = async () => { await api('PUT', `/api/avail/user/${uid}`, { date, clear: true }); closeModal(); pageDisposition(el); };
+  });
+  $$('[data-copy]', el).forEach(btn => btn.onclick = async () => { if (!confirm(t('av_copy_q', { name: wname(btn.dataset.copy) }))) return; try { await api('POST', `/api/avail/user/${btn.dataset.copy}/copy`, { week: dispWeek }); toast(t('saved')); pageDisposition(el); } catch (e) { toast(e.message); } });
+  $$('[data-fill]', el).forEach(btn => btn.onclick = () => {
+    const b = modal(`<h2>${t('av_fill_week')}: ${esc(wname(btn.dataset.fill))}</h2><p class="small mute">${ddmm(dispWeek)} – ${ddmm(end)}</p><div id="fed"></div><div id="ferr"></div>
+      <div class="row end" style="margin-top:10px"><button onclick="closeModal()">${t('cancel')}</button><button class="pri" id="fok">${t('save')}</button></div>`);
+    const get = availEditor($('#fed', b), null);
+    $('#fok', b).onclick = async () => { const v = get(); if (!v) return; try { await api('POST', `/api/avail/user/${btn.dataset.fill}/fill`, { week: dispWeek, ...v }); closeModal(); toast(t('saved')); pageDisposition(el); } catch (e) { $('#ferr', b).innerHTML = errBox(e); } };
+  });
 }
 
 window.closeModal = closeModal;

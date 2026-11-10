@@ -106,3 +106,14 @@ td.dl-day{background:var(--acc2)}
 .typebtns button{text-align:left;padding:10px}
 .typebtns button.on{border-color:var(--acc);background:var(--acc2)}
 @media print{header.top,nav.tabs,.noprint{display:none}}
+/* диспозиція */
+:root{--avfull:#d6f0dc;--avpart:#fff1b8;--avno:#fbd5d5;--avnone:#eceeed}
+@media (prefers-color-scheme:dark){:root{--avfull:#1e4029;--avpart:#4a4114;--avno:#4d2222;--avnone:#2a302b}}
+.av-full{background:var(--avfull)!important}.av-part{background:var(--avpart)!important}.av-no{background:var(--avno)!important}.av-none{background:var(--avnone)!important;color:var(--mute)}
+table.avtable td.avcell{cursor:pointer;font-size:12.5px;min-width:96px}
+table.avtable td.avcell:hover{outline:2px solid var(--acc);outline-offset:-2px}
+.avbtns{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px}
+.avbtns button{padding:8px 6px;font-size:13.5px}
+.avbtns button.on{background:var(--acc);color:#fff;border-color:var(--acc)}
+.avtimes label{display:flex;gap:6px;align-items:center}
+.sunbox{border-color:#e6cf6a}

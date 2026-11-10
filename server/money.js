@@ -82,7 +82,7 @@ function warnings(locIds, from, to, t) {
 function register(app, h) {
   const { wrap, needAdmin, needMember, bad } = h;
   const checkOpen = (req, locId, date) => {
-    if (L.isClosed(locId, date) && req.user.role !== 'owner') bad(req.t('err_month_closed_money', { month: L.monthOf(date) }));
+    if (L.isClosed(locId, date) && !L.isAdminUser(req.user)) bad(req.t('err_month_closed_money', { month: L.monthOf(date) }));
   };
 
   app.get('/api/money', wrap(req => {

@@ -333,6 +333,7 @@ function describe(r, t) {
     case 'handover': return `${sl} → ${d.time}`;
     case 'early': return `${sl} ${d.noshow ? t('noshow') : '→ ' + d.time}`;
     case 'pallets': return `${r.date}: ${d.pallets}`;
+    case 'avail': return `${r.date}: ${require('./avail').describe(d, t)}`;
   }
   return '';
 }

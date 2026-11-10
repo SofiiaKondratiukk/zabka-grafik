@@ -35,22 +35,22 @@ const palletPay = p => (p && p > 0) ? 120 + (p - 1) * 80 : 0;
 
 // ---------- users / access ----------
 const userName = id => id ? ((get('SELECT name FROM users WHERE id=?', id) || {}).name || '?') : '';
+/** Адміністратор (будь-який) — повний доступ до всього. 'owner' — стара назва ролі, діє так само. */
+const isAdminUser = user => !!user && (user.role === 'admin' || user.role === 'owner');
 function locationsFor(user) {
-  if (user.role === 'owner') return all('SELECT * FROM locations WHERE active=1 ORDER BY sort,id');
+  if (isAdminUser(user)) return all('SELECT * FROM locations WHERE active=1 ORDER BY sort,id');
   return all(`SELECT DISTINCT l.* FROM locations l LEFT JOIN user_locations ul ON ul.location_id=l.id AND ul.user_id=?
     WHERE l.active=1 AND (ul.user_id IS NOT NULL OR l.admin_id=? OR l.deputy_id=?) ORDER BY l.sort,l.id`, user.id, user.id, user.id);
 }
 function isAdmin(user, locId) {
   if (!user) return false;
-  if (user.role === 'owner') return true;
-  const l = get('SELECT admin_id, deputy_id FROM locations WHERE id=?', locId);
-  return !!l && (l.admin_id === user.id || l.deputy_id === user.id);
+  return isAdminUser(user);
 }
 function adminLocIds(user) {
-  if (user.role === 'owner') return all('SELECT id FROM locations').map(r => r.id);
-  return all('SELECT id FROM locations WHERE admin_id=? OR deputy_id=?', user.id, user.id).map(r => r.id);
+  if (isAdminUser(user)) return all('SELECT id FROM locations').map(r => r.id);
+  return [];
 }
-const canRates = user => user.role === 'owner' || !!user.can_rates;
+const canRates = user => isAdminUser(user);
 function isClosed(locId, date) { return !!get('SELECT 1 FROM months WHERE location_id=? AND month=?', locId, monthOf(date)); }
 function isPublished(locId, date) { return (get('SELECT status FROM weeks WHERE location_id=? AND week=?', locId, weekStart(date)) || {}).status === 'published'; }
 
@@ -190,5 +190,5 @@ function audit(user, locId, action, details) {
   run('INSERT INTO audit(user_id, location_id, action, details) VALUES(?,?,?,?)', user ? user.id : null, locId || null, action, typeof details === 'string' ? details : JSON.stringify(details));
 }
 
-module.exports = { warsawNow, addDays, dow, weekStart, monthOf, monthRange, prevMonth, hm, parseHM, dates, defaults, palletPay, DELIVERY_DOW, TIMED,
+module.exports = { isAdminUser, warsawNow, addDays, dow, weekStart, monthOf, monthRange, prevMonth, hm, parseHM, dates, defaults, palletPay, DELIVERY_DOW, TIMED,
   userName, locationsFor, isAdmin, adminLocIds, canRates, isClosed, isPublished, validate, computeRecords, money, warnings, audit, shiftCredited };

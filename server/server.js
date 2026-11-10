@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const path = require('path');
 const { all, get, run, tx, setting } = require('./db');
 const L = require('./logic');
-const { notify, notifyAdmins, startBot, getBotUsername, tgEnabled } = require('./notify');
+const { notify, notifyAdmins, adminRecipients, startBot, getBotUsername, tgEnabled } = require('./notify');
 const { tr } = require('../public/i18n.js');
 const reports = require('./reports');
 const exporter = require('./export');
@@ -33,10 +33,10 @@ function auth(req, res, next) {
   req.t = (k, p) => tr(u.lang || 'uk', k, p);
   next();
 }
-const memberOf = (user, locId) => user.role === 'owner' || L.isAdmin(user, locId) || !!get('SELECT 1 FROM user_locations WHERE user_id=? AND location_id=?', user.id, locId);
+const memberOf = (user, locId) => L.isAdminUser(user) || L.isAdmin(user, locId) || !!get('SELECT 1 FROM user_locations WHERE user_id=? AND location_id=?', user.id, locId);
 const needMember = (req, locId) => { if (!memberOf(req.user, Number(locId))) forbid(); };
 const needAdmin = (req, locId) => { if (!L.isAdmin(req.user, Number(locId))) forbid(); };
-const needOwner = req => { if (req.user.role !== 'owner') forbid(); };
+const needOwner = req => { if (!L.isAdminUser(req.user)) forbid(); }; // будь-який адміністратор
 const needOpen = (req, locId, date) => { if (L.isClosed(locId, date)) bad(req.t('err_month_closed', { month: L.monthOf(date) })); };
 const locName = id => (get('SELECT name FROM locations WHERE id=?', id) || {}).name || '';
 const tFor = uid => { const u = get('SELECT lang FROM users WHERE id=?', uid); return (k, p) => tr((u && u.lang) || 'uk', k, p); };
@@ -112,7 +112,7 @@ app.get('/api/users', wrap(req => {
   if (!admLocs.length) forbid();
   const rates = L.canRates(req.user);
   let users;
-  if (req.user.role === 'owner') users = all('SELECT * FROM users ORDER BY active DESC, name');
+  if (L.isAdminUser(req.user)) users = all('SELECT * FROM users ORDER BY active DESC, name');
   else users = all(`SELECT DISTINCT u.* FROM users u JOIN user_locations ul ON ul.user_id=u.id WHERE ul.location_id IN (${admLocs.join(',')}) ORDER BY u.active DESC, u.name`);
   return users.map(u => {
     const s = safeUser(u);
@@ -136,14 +136,15 @@ app.post('/api/users', wrap(req => {
   const r = run('INSERT INTO users(login,pass,name,rate,training_rate,lang) VALUES(?,?,?,?,?,?)', b.login.trim(), hash(String(b.password)), b.name.trim(),
     rates && b.rate != null ? Number(b.rate) : Number(setting('base_rate') || 31.4), rates && b.training_rate != null ? Number(b.training_rate) : Number(setting('training_rate') || 20), b.lang === 'pl' ? 'pl' : 'uk');
   const uid = Number(r.lastInsertRowid);
+  if (b.role === 'admin') run("UPDATE users SET role='admin' WHERE id=?", uid);
   saveUserLocations(req, uid, (b.locations || []).map(Number));
-  L.audit(req.user, null, 'user_create', { name: b.name, login: b.login });
+  L.audit(req.user, null, 'user_create', { name: b.name, login: b.login, role: b.role === 'admin' ? 'admin' : 'user' });
   return { id: uid };
 }));
 app.put('/api/users/:id', wrap(req => {
   const uid = Number(req.params.id);
   const u = get('SELECT * FROM users WHERE id=?', uid); if (!u) bad('not found');
-  const owner = req.user.role === 'owner';
+  const owner = L.isAdminUser(req.user);
   const admLocs = L.adminLocIds(req.user);
   if (!owner) {
     const theirs = all('SELECT location_id FROM user_locations WHERE user_id=?', uid).map(r => r.location_id);
@@ -157,7 +158,10 @@ app.put('/api/users/:id', wrap(req => {
     if (b.rate != null && Number(b.rate) !== u.rate) { run('UPDATE users SET rate=? WHERE id=?', Number(b.rate), uid); changes.rate = [u.rate, Number(b.rate)]; }
     if (b.training_rate != null && Number(b.training_rate) !== u.training_rate) { run('UPDATE users SET training_rate=? WHERE id=?', Number(b.training_rate), uid); changes.training_rate = [u.training_rate, Number(b.training_rate)]; }
   }
-  if (owner && b.can_rates != null) { run('UPDATE users SET can_rates=? WHERE id=?', b.can_rates ? 1 : 0, uid); changes.can_rates = b.can_rates ? 1 : 0; }
+  if (owner && (b.role === 'admin' || b.role === 'user') && b.role !== (L.isAdminUser(u) ? 'admin' : 'user')) {
+    if (b.role === 'user' && get("SELECT count(*) c FROM users WHERE role IN ('admin','owner') AND active=1 AND id<>?", uid).c === 0) bad(req.t('err_last_admin'));
+    run('UPDATE users SET role=? WHERE id=?', b.role, uid); changes.role = [u.role, b.role];
+  }
   if (b.password) { if (String(b.password).length < 6) bad(req.t('err_password_short')); run('UPDATE users SET pass=? WHERE id=?', hash(String(b.password)), uid); changes.password = 'reset'; }
   if (Array.isArray(b.locations)) { saveUserLocations(req, uid, b.locations.map(Number)); changes.locations = b.locations; }
   L.audit(req.user, null, 'user_update', { user: u.name, ...changes });
@@ -181,7 +185,13 @@ function weekView(locId, week, user) {
   }
   if (!admin && w.status !== 'published') return { week, status: 'hidden', location: loc, days: days.map(d => ({ ...d, cells: {}, delivery: null })) };
   const warn = admin ? L.warnings([locId], week, end, tFor(user.id)) : [];
-  return { week, status: w.status, published_at: w.published_at, location: loc, days, warnings: warn, is_admin: admin };
+  let availMap;
+  if (admin) { // диспозиція для вибору працівника на зміну
+    availMap = {};
+    const ids = all('SELECT user_id FROM user_locations WHERE location_id=?', locId).map(r => r.user_id);
+    for (const e of require('./avail').weekEntries(ids, week)) (availMap[e.user_id] = availMap[e.user_id] || {})[e.date] = e;
+  }
+  return { week, status: w.status, published_at: w.published_at, location: loc, days, warnings: warn, is_admin: admin, avail: availMap };
 }
 app.get('/api/schedule/:loc', wrap(req => {
   const locId = Number(req.params.loc); needMember(req, locId);
@@ -377,7 +387,7 @@ app.get('/api/my/hours', wrap(req => {
 }));
 
 // ---------- requests ----------
-const REQ_TYPES = ['extra', 'swap', 'handover', 'early', 'pallets', 'training'];
+const REQ_TYPES = ['extra', 'swap', 'handover', 'early', 'pallets', 'training', 'avail'];
 function describeRequest(r, t) {
   const d = JSON.parse(r.data || '{}');
   const s = r.shift_id && get('SELECT * FROM shifts WHERE id=?', r.shift_id);
@@ -388,6 +398,7 @@ function describeRequest(r, t) {
     case 'handover': return s ? t('rqd_handover', { shift: shiftLabel(s, t), time: d.time }) : '?';
     case 'early': return s ? (d.noshow ? t('rqd_noshow', { shift: shiftLabel(s, t) }) : t('rqd_early', { shift: shiftLabel(s, t), time: d.time })) : '?';
     case 'pallets': return t('rqd_pallets', { date: r.date, pallets: d.pallets });
+    case 'avail': return `${r.date}: ${require('./avail').describe(d, t)}`;
   }
   return '';
 }
@@ -416,6 +427,8 @@ app.post('/api/requests', wrap(req => {
       if (b.type === 'early' && b.noshow) data.noshow = true;
       else { const tm = L.parseHM(b.time); if (tm == null || isNaN(tm)) bad(t('err_time_format')); data.time = L.hm(tm); }
     }
+  } else if (b.type === 'avail') {
+    Object.assign(data, require('./avail').normalize(b, t));
   } else if (b.type === 'pallets') {
     const p = Number(b.pallets); if (!(p >= 0) || Math.round(p * 2) !== p * 2) bad(t('err_pallets')); data.pallets = p;
   } else {
@@ -428,7 +441,7 @@ app.post('/api/requests', wrap(req => {
   const rq = get('SELECT * FROM requests WHERE id=?', Number(r.lastInsertRowid));
   L.audit(req.user, locId, 'request_create', { id: rq.id, type: rq.type, desc: describeRequest(rq, t), comment: b.comment });
   const l = get('SELECT * FROM locations WHERE id=?', locId);
-  const ids = new Set([l.admin_id, l.deputy_id, ...all("SELECT id FROM users WHERE role='owner'").map(x => x.id)].filter(Boolean)); ids.delete(req.user.id);
+  const ids = adminRecipients(locId); ids.delete(req.user.id);
   for (const id of ids) { const tt = tFor(id); notify(id, `[${l.name}] ` + tt('n_new_request', { name: req.user.name, type: tt('rq_' + rq.type), desc: describeRequest(rq, tt) }) + (b.comment ? ` — ${b.comment}` : ''), 'request'); }
   return { id: rq.id };
 }));
@@ -474,6 +487,9 @@ function applyRequest(r, approver, t) {
       }
       break;
     }
+    case 'avail':
+      require('./avail').upsert(r.user_id, r.date, d, approver.id);
+      break;
     case 'pallets':
       run(`INSERT INTO deliveries(location_id,date,user_id,pallets,confirmed_by,confirmed_at) VALUES(?,?,?,?,?,datetime('now'))
         ON CONFLICT(location_id,date) DO UPDATE SET pallets=excluded.pallets, confirmed_by=excluded.confirmed_by, confirmed_at=excluded.confirmed_at`, r.location_id, r.date, r.user_id, d.pallets, approver.id);
@@ -579,7 +595,7 @@ app.get('/api/audit', wrap(req => {
   const loc = req.query.loc;
   if (loc === 'all') needOwner(req); else needAdmin(req, loc);
   const rows = loc === 'all' ? all('SELECT a.*, u.name user_name FROM audit a LEFT JOIN users u ON u.id=a.user_id ORDER BY a.id DESC LIMIT 500')
-    : all('SELECT a.*, u.name user_name FROM audit a LEFT JOIN users u ON u.id=a.user_id WHERE a.location_id=? OR (a.location_id IS NULL AND ?) ORDER BY a.id DESC LIMIT 500', Number(loc), req.user.role === 'owner' ? 1 : 0);
+    : all('SELECT a.*, u.name user_name FROM audit a LEFT JOIN users u ON u.id=a.user_id WHERE a.location_id=? OR (a.location_id IS NULL AND ?) ORDER BY a.id DESC LIMIT 500', Number(loc), L.isAdminUser(req.user) ? 1 : 0);
   return rows.map(r => ({ ...r, location: locName(r.location_id) }));
 }));
 
@@ -612,13 +628,14 @@ function remind() {
   for (const r of all("SELECT * FROM requests WHERE status='pending' AND reminded_at IS NULL AND created_at <= datetime('now','-24 hours')")) {
     run("UPDATE requests SET reminded_at=datetime('now') WHERE id=?", r.id);
     const l = get('SELECT * FROM locations WHERE id=?', r.location_id);
-    const ids = new Set([l && l.admin_id, l && l.deputy_id, ...all("SELECT id FROM users WHERE role='owner'").map(x => x.id)].filter(Boolean));
+    const ids = adminRecipients(r.location_id);
     for (const id of ids) { const tt = tFor(id); notify(id, `[${l.name}] ` + tt('n_reminder', { name: L.userName(r.user_id), type: tt('rq_' + r.type), desc: describeRequest(r, tt) }), 'reminder'); }
   }
 }
 setInterval(remind, 15 * 60 * 1000);
 
-require('./money').register(app, { wrap, needAdmin, needMember, bad }); // премії, штрафи, мінуси, аванси
+require('./money').register(app, { wrap, needAdmin, needMember, bad });
+const avail = require('./avail'); avail.register(app, { wrap, needAdmin, needMember, bad, forbid }); // диспозиція // премії, штрафи, мінуси, аванси
 
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, '..', 'public', 'index.html')));
 

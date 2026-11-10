@@ -8,9 +8,9 @@ const LOCS = [
   { name: 'Stradomska 18', admin: 'mariia', restock: 0 },
 ];
 const USERS = [
-  { login: 'mariia', name: 'Mariia Poradiuk', role: 'owner', locs: [3] },
-  { login: 'sofiia', name: 'Sofiia Kondratiuk', locs: [1] },
-  { login: 'andrii', name: 'Andrii Lavtakov', locs: [2] },
+  { login: 'mariia', name: 'Mariia Poradiuk', role: 'admin', locs: [3] },
+  { login: 'sofiia', name: 'Sofiia Kondratiuk', role: 'admin', locs: [1] },
+  { login: 'andrii', name: 'Andrii Lavtakov', role: 'admin', locs: [2] },
   { login: 'ivan', name: 'Іван', locs: [1, 2] },
   { login: 'maksym', name: 'Максим', locs: [1, 3] },
   { login: 'nikita', name: 'Нікіта', locs: [2, 3] },
