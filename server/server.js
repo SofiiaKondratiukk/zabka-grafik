@@ -58,7 +58,7 @@ app.post('/api/logout', wrap((req, res) => { run('DELETE FROM sessions WHERE tok
 app.get('/api/me', wrap(req => {
   const locs = L.locationsFor(req.user).map(l => ({ ...l, is_admin: L.isAdmin(req.user, l.id), admin_name: L.userName(l.admin_id), deputy_name: L.userName(l.deputy_id) }));
   return { user: safeUser(req.user), locations: locs, can_rates: L.canRates(req.user), unread: get('SELECT count(*) c FROM notifications WHERE user_id=? AND read=0', req.user.id).c,
-    tg: { enabled: tgEnabled(), bot: getBotUsername() }, now: L.warsawNow() };
+    tg: { enabled: tgEnabled(), bot: getBotUsername(), configured: require('./telegram').status().configured }, now: L.warsawNow() };
 }));
 app.post('/api/me/lang', wrap(req => { const lang = req.body.lang === 'pl' ? 'pl' : 'uk'; run('UPDATE users SET lang=? WHERE id=?', lang, req.user.id); return { ok: true }; }));
 app.post('/api/me/password', wrap(req => {
@@ -73,7 +73,7 @@ app.post('/api/me/tg-code', wrap(req => {
   const code = crypto.randomBytes(6).toString('hex');
   run('UPDATE users SET tg_code=? WHERE id=?', code, req.user.id);
   const bot = getBotUsername();
-  return { code, link: bot ? `https://t.me/${bot}?start=${code}` : null };
+  return { code, link: `https://t.me/${bot}?start=${code}` };
 }));
 app.post('/api/me/tg-unlink', wrap(req => { run('UPDATE users SET tg_chat_id=NULL WHERE id=?', req.user.id); return { ok: true }; }));
 app.get('/api/notifications', wrap(req => all('SELECT * FROM notifications WHERE user_id=? ORDER BY id DESC LIMIT 100', req.user.id)));
@@ -636,7 +636,8 @@ setInterval(remind, 15 * 60 * 1000);
 
 require('./money').register(app, { wrap, needAdmin, needMember, bad });
 const avail = require('./avail'); avail.register(app, { wrap, needAdmin, needMember, bad, forbid }); // диспозиція
-require('./tasks').register(app, { wrap, needAdmin, needMember, bad, forbid }); // завдання від адміністратора // премії, штрафи, мінуси, аванси
+require('./tasks').register(app, { wrap, needAdmin, needMember, bad, forbid }); // завдання від адміністратора
+require('./telegram').register(app, { wrap, bad, forbid, L }); // Telegram-бот: webhook, токен, тест // премії, штрафи, мінуси, аванси
 
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, '..', 'public', 'index.html')));
 
