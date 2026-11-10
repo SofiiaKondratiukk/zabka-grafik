@@ -5,6 +5,26 @@ const L = require('./logic');
 const locName = id => (get('SELECT name FROM locations WHERE id=?', id) || {}).name || '';
 const userRow = id => get('SELECT * FROM users WHERE id=?', id);
 const r2 = x => Math.round(x * 100) / 100;
+const M = () => require('./money');
+/** Додає до рядків працівників, у яких є лише премії/штрафи/мінуси/аванси, і проставляє ці суми. */
+function addMoney(rows, mlist, locIds) {
+  const ms = M().sums(mlist);
+  for (const uid of ms.keys()) if (!rows.some(r => r.user_id === uid)) {
+    const u = userRow(uid);
+    rows.push({ user_id: uid, name: u.name, rate: u.rate, trate: u.training_rate, shifts: 0, sched: 0, extra: 0, training: 0, total: 0, pallets: 0, deliveries: 0, sum_hours: 0, sum_pallets: 0, pay: 0, locs: new Set(mlist.filter(e => e.user_id === uid).map(e => e.location_id)) });
+  }
+  for (const r of rows) { const m = ms.get(r.user_id) || M().empty(); Object.assign(r, m, M().settle(r.pay, m)); }
+  rows.sort((x, y) => x.name.localeCompare(y.name));
+  return rows;
+}
+const MONEY_COLS = t => [
+  { k: 'bonus', l: t('c_bonus'), t: 'money', sum: true },
+  { k: 'fine', l: t('c_fine'), t: 'money', sum: true },
+  { k: 'shortage', l: t('c_shortage'), t: 'money', sum: true },
+  { k: 'accrued', l: t('c_accrued'), t: 'money', sum: true, f: '{pay}+{bonus}-{fine}-{shortage}', bold: true },
+  { k: 'advance', l: t('c_advance'), t: 'money', sum: true },
+  { k: 'to_pay', l: t('c_to_pay'), t: 'money', sum: true, f: '{accrued}-{advance}', bold: true },
+];
 
 function aggregate(recs) {
   const by = new Map();
@@ -25,7 +45,7 @@ function aggregate(recs) {
 function payrollSection(p, locIds, title, withStatus) {
   const t = p.t;
   const recs = L.computeRecords(locIds, p.from, p.to, p.userId);
-  const rows = aggregate(recs);
+  const rows = addMoney(aggregate(recs), M().entries(locIds, p.from, p.to, p.userId), locIds);
   const month = p.from.slice(0, 7);
   if (withStatus) for (const r of rows) {
     const st = get('SELECT * FROM payroll_status WHERE location_id=? AND user_id=? AND month=?', locIds[0], r.user_id, month) || {};
@@ -48,13 +68,60 @@ function payrollSection(p, locIds, title, withStatus) {
     { k: 'deliveries', l: t('c_deliveries'), t: 'int', sum: true },
     { k: 'pallets', l: t('c_pallets'), t: 'pallets', sum: true },
     { k: 'sum_pallets', l: t('c_sum_pallets'), t: 'money', sum: true, f: 'IF({deliveries}>0,40*{deliveries}+80*{pallets},0)' },
-    { k: 'pay', l: t('c_pay'), t: 'money', sum: true, f: '{sum_hours}+{sum_pallets}', bold: true },
+    { k: 'pay', l: t('c_earned'), t: 'money', sum: true, f: '{sum_hours}+{sum_pallets}' },
+    ...MONEY_COLS(t),
     ...(withStatus ? [{ k: 'status', l: t('c_status'), t: 'text', ui: 'status' }] : []),
   ];
   return { title, columns, rows, totals: true, location_id: withStatus ? locIds[0] : null, month };
 }
 
+function moneyListSection(ml, t, title, withLoc) {
+  const rows = ml.map(e => {
+    const sh = e.shift_id && get('SELECT * FROM shifts WHERE id=?', e.shift_id);
+    return { id: e.id, date: e.date, location: locName(e.location_id), name: L.userName(e.user_id), kind: t('mk_' + e.kind), amount: r2(M().SIGN[e.kind] * e.amount),
+      method: e.method ? t('method_' + e.method) : '', shift: sh ? `${t('slot_' + sh.slot)} ${L.hm(sh.start)}–${L.hm(sh.end)}` : '', comment: e.comment,
+      created: `${L.userName(e.created_by)}, ${e.created_at.slice(0, 16)} UTC`, _cls: e.kind === 'bonus' ? '' : (e.kind === 'advance' ? '' : 'warn') };
+  });
+  return { title, rows, deletable: 'money', columns: [{ k: 'date', l: t('c_date'), t: 'text' }, ...(withLoc ? [{ k: 'location', l: t('c_location'), t: 'text' }] : []), { k: 'name', l: t('c_worker'), t: 'text' },
+    { k: 'kind', l: t('c_kind'), t: 'text' }, { k: 'amount', l: t('c_sum') + ' zł', t: 'money' }, { k: 'method', l: t('c_method'), t: 'text' }, { k: 'shift', l: t('c_slot'), t: 'text' },
+    { k: 'comment', l: t('c_comment'), t: 'text', wrap: true }, { k: 'created', l: t('c_entered_by'), t: 'text' }] };
+}
+
+function moneyByLocation(p) {
+  const t = p.t;
+  const rows = p.locIds.map(l => {
+    const ag = addMoney(aggregate(L.computeRecords([l], p.from, p.to, p.userId)), M().entries([l], p.from, p.to, p.userId), [l]);
+    const s = k => r2(ag.reduce((a, r) => a + (r[k] || 0), 0));
+    return { location: locName(l), pay: s('pay'), bonus: s('bonus'), fine: s('fine'), shortage: s('shortage'), accrued: s('accrued'), advance: s('advance'), to_pay: s('to_pay') };
+  });
+  return { title: t('money_by_location'), rows, totals: true, columns: [{ k: 'location', l: t('c_location'), t: 'text' }, { k: 'pay', l: t('c_earned'), t: 'money', sum: true }, ...MONEY_COLS(t)] };
+}
+
 const reportsDef = {
+  money(p) {
+    const t = p.t;
+    const ml = M().entries(p.locIds, p.from, p.to, p.userId);
+    const sections = [moneyListSection(ml, t, t('r_money'), p.locIds.length > 1)];
+    // по працівниках (окремо для кожної локації)
+    const byWorker = [];
+    for (const l of p.locIds) {
+      const ag = addMoney(aggregate(L.computeRecords([l], p.from, p.to, p.userId)), ml.filter(e => e.location_id === l), [l]);
+      for (const r of ag) if (r.bonus || r.fine || r.shortage || r.advance) byWorker.push({ name: r.name, location: locName(l), pay: r.pay, bonus: r.bonus, fine: r.fine, shortage: r.shortage, accrued: r.accrued, advance: r.advance, to_pay: r.to_pay });
+    }
+    sections.push({ title: t('totals_by_worker'), rows: byWorker, totals: true, columns: [{ k: 'name', l: t('c_worker'), t: 'text' }, ...(p.locIds.length > 1 ? [{ k: 'location', l: t('c_location'), t: 'text' }] : []), { k: 'pay', l: t('c_earned'), t: 'money', sum: true }, ...MONEY_COLS(t)] });
+    sections.push(moneyByLocation(p));
+    // мінуси по змінах / датах
+    const groups = new Map();
+    for (const e of ml.filter(x => x.kind === 'shortage')) {
+      const k = e.group_id || ('s' + e.id);
+      if (!groups.has(k)) { const sh = e.shift_id && get('SELECT * FROM shifts WHERE id=?', e.shift_id); groups.set(k, { date: e.date, location: locName(e.location_id), shift: sh ? `${t('slot_' + sh.slot)} ${L.hm(sh.start)}–${L.hm(sh.end)}` : '', total: 0, split: [], comment: e.comment }); }
+      const g = groups.get(k); g.total = r2(g.total + e.amount); g.split.push(`${L.userName(e.user_id)} ${e.amount.toFixed(2)}`);
+    }
+    sections.push({ title: t('shortages_by_shift'), totals: true, rows: [...groups.values()].map(g => ({ ...g, split: g.split.join(', ') })), columns: [{ k: 'date', l: t('c_date'), t: 'text' }, ...(p.locIds.length > 1 ? [{ k: 'location', l: t('c_location'), t: 'text' }] : []),
+      { k: 'shift', l: t('c_slot'), t: 'text' }, { k: 'total', l: t('c_shortage'), t: 'money', sum: true }, { k: 'split', l: t('c_split'), t: 'text', wrap: true }, { k: 'comment', l: t('c_comment'), t: 'text', wrap: true }] });
+    return { title: t('r_money'), sections };
+  },
+
   payroll(p) {
     const sections = p.locIds.map(l => payrollSection(p, [l], locName(l), true));
     if (p.all) sections.push(payrollSection(p, p.locIds, p.t('all_locations'), false));
@@ -76,10 +143,20 @@ const reportsDef = {
       return { date: r.date, dow: t('dow_' + L.dow(r.date)), location: locName(r.location_id), shifts: sh.join('; '), sched: r.sched, extra: r.extra, training: r.training,
         pallets: r.pallets || '', source: [...src, r.delivery ? `${t('c_pallets')}: ${r.delivery.pallets} (${t('confirmed_by')} ${L.userName(r.delivery.confirmed_by)})` : ''].filter(Boolean).join('; '), sum: r2(m.total), _cls: L.dow(r.date) === 6 ? 'sun' : '' };
     }).filter(r => r.sched || r.extra || r.training || r.pallets);
-    return { title: `${t('r_detail')}: ${u.name}`, sections: [{ title: `${t('c_rate')}: ${u.rate} zł/${t('h')}, ${t('c_trate')}: ${u.training_rate} zł/${t('h')}`, totals: true, rows, columns: [
+    const out = { title: `${t('r_detail')}: ${u.name}`, sections: [{ title: `${t('c_rate')}: ${u.rate} zł/${t('h')}, ${t('c_trate')}: ${u.training_rate} zł/${t('h')}`, totals: true, rows, columns: [
       { k: 'date', l: t('c_date'), t: 'text' }, { k: 'dow', l: '', t: 'text' }, { k: 'location', l: t('c_location'), t: 'text' },
       { k: 'shifts', l: t('c_shift_time'), t: 'text', wrap: true }, { k: 'sched', l: t('c_sched'), t: 'hm', sum: true }, { k: 'extra', l: t('c_extra'), t: 'hm', sum: true },
       { k: 'training', l: t('c_training'), t: 'hm', sum: true }, { k: 'pallets', l: t('c_pallets'), t: 'pallets', sum: true }, { k: 'source', l: t('c_source'), t: 'text', wrap: true }, { k: 'sum', l: t('c_sum'), t: 'money', sum: true }] }] };
+    // премії, штрафи, мінуси, аванси — кожен запис з коментарем
+    const ml = M().entries(p.locIds, p.from, p.to, p.userId);
+    out.sections.push(moneyListSection(ml, t, t('r_money'), p.locIds.length > 1));
+    const earned = r2(rows.reduce((a, r) => a + (r.sum || 0), 0));
+    const ms = M().sums(ml, () => 'u').get('u') || M().empty(); const st = M().settle(earned, ms);
+    out.sections.push({ title: t('totals'), rows: [
+      { k: t('c_earned'), v: earned }, { k: '+ ' + t('c_bonus'), v: ms.bonus }, { k: '− ' + t('c_fine'), v: ms.fine }, { k: '− ' + t('c_shortage'), v: ms.shortage },
+      { k: '= ' + t('c_accrued'), v: st.accrued, _cls: 'bold' }, { k: '− ' + t('c_advance'), v: ms.advance }, { k: '= ' + t('c_to_pay'), v: st.to_pay, _cls: 'bold' }],
+      columns: [{ k: 'k', l: '', t: 'text' }, { k: 'v', l: 'zł', t: 'money' }] });
+    return out;
   },
 
   daily(p) {
@@ -87,14 +164,16 @@ const reportsDef = {
     const sections = [];
     for (const locId of p.locIds) {
       const recs = L.computeRecords([locId], p.from, p.to, p.userId);
-      const workers = aggregate(recs);
+      const ml = M().entries([locId], p.from, p.to, p.userId);
+      const workers = addMoney(aggregate(recs), ml, [locId]);
       const columns = [{ k: 'date', l: t('c_date'), t: 'text' }, { k: 'dow', l: '', t: 'text' }];
       for (const w of workers) {
         const id = w.user_id;
         columns.push({ k: 'ft' + id, l: w.name, t: 'text', group: w.name, sub: t('c_from_to') },
           { k: 'h' + id, l: t('c_hours'), t: 'hm', sum: true, group: w.name, sub: t('c_hours_s') },
           { k: 'x' + id, l: t('c_extra'), t: 'hm', sum: true, group: w.name, sub: t('c_extra_s') },
-          { k: 'p' + id, l: t('c_pallets'), t: 'pallets', sum: true, group: w.name, sub: t('c_pallets_s') });
+          { k: 'p' + id, l: t('c_pallets'), t: 'pallets', sum: true, group: w.name, sub: t('c_pallets_s') },
+          { k: 'm' + id, l: t('c_shortage'), t: 'money', sum: true, group: w.name, sub: t('c_shortage_s') });
       }
       const rows = L.dates(p.from, p.to).map(d => {
         const row = { date: d.slice(8, 10) + '.' + d.slice(5, 7), dow: t('dow_' + L.dow(d)), _cls: L.dow(d) === 6 ? 'sun' : '' };
@@ -102,18 +181,20 @@ const reportsDef = {
           row['ft' + r.user_id] = r.shifts.map(s => `${L.hm(s.start)}–${L.hm(s.end)}`).join(', ');
           row['h' + r.user_id] = r.sched || null; row['x' + r.user_id] = (r.extra + r.training) || null; row['p' + r.user_id] = r.pallets || null;
         }
+        for (const e of ml) if (e.date === d && e.kind === 'shortage') row['m' + e.user_id] = r2((row['m' + e.user_id] || 0) + e.amount);
         return row;
       });
       const after = [
         { date: t('c_rate'), dow: '', _money: true, _cls: 'bold' },
         { date: t('c_sum_hours'), dow: '', _money: true, _cls: 'bold' },
         { date: t('c_sum_pallets'), dow: '', _money: true, _cls: 'bold' },
-        { date: t('c_pay'), dow: '', _money: true, _cls: 'bold' },
+        { date: t('c_earned'), dow: '', _money: true, _cls: 'bold' },
+        { date: t('c_accrued'), dow: '', _money: true, _cls: 'bold' },
+        { date: t('c_to_pay'), dow: '', _money: true, _cls: 'bold' },
       ];
-      for (const w of workers) { after[0]['h' + w.user_id] = w.rate; after[1]['h' + w.user_id] = w.sum_hours; after[2]['p' + w.user_id] = w.sum_pallets; after[3]['h' + w.user_id] = w.pay; }
-      const grand = workers.reduce((a, w) => a + w.pay, 0);
-      after[3].dow = '';
-      sections.push({ title: `${locName(locId)} — ${t('c_pay')}: ${r2(grand).toFixed(2)} zł`, columns, rows, totals: true, fitPage: true, grouped: true, afterRows: after });
+      for (const w of workers) { after[0]['h' + w.user_id] = w.rate; after[1]['h' + w.user_id] = w.sum_hours; after[2]['p' + w.user_id] = w.sum_pallets; after[3]['h' + w.user_id] = w.pay; after[4]['h' + w.user_id] = w.accrued; after[5]['h' + w.user_id] = w.to_pay; }
+      const grand = workers.reduce((a, w) => a + w.to_pay, 0);
+      sections.push({ title: `${locName(locId)} — ${t('c_to_pay')}: ${r2(grand).toFixed(2)} zł`, columns, rows, totals: true, fitPage: true, grouped: true, afterRows: after });
     }
     return { title: t('r_daily'), sections, orientation: 'landscape' };
   },
@@ -218,6 +299,7 @@ const reportsDef = {
       { title: t('by_location'), rows: locRows, totals: true, columns: [{ k: 'location', l: t('c_location'), t: 'text' }, { k: 'workers', l: t('c_workers'), t: 'int' }, { k: 'sched', l: t('c_sched'), t: 'hm', sum: true },
         { k: 'extra', l: t('c_extra'), t: 'hm', sum: true }, { k: 'training', l: t('c_training'), t: 'hm', sum: true }, { k: 'total', l: t('c_total_hm'), t: 'hm', sum: true }, { k: 'pallets', l: t('c_pallets'), t: 'pallets', sum: true },
         { k: 'sum_hours', l: t('c_sum_hours'), t: 'money', sum: true }, { k: 'sum_pallets', l: t('c_sum_pallets'), t: 'money', sum: true }, { k: 'pay', l: t('c_pay'), t: 'money', sum: true, bold: true, f: '{sum_hours}+{sum_pallets}' }] },
+      moneyByLocation(p),
       { title: t('multi_location_workers'), rows: multi, columns: [{ k: 'name', l: t('c_worker'), t: 'text' }, { k: 'location', l: t('c_location'), t: 'text' }, { k: 'total', l: t('c_total_hm'), t: 'hm' }, { k: 'pallets', l: t('c_pallets'), t: 'pallets' }, { k: 'pay', l: t('c_pay'), t: 'money' }] }] };
   },
 
@@ -268,4 +350,4 @@ function build(type, p) {
   }
   return rep;
 }
-module.exports = { build };
+module.exports = { build, aggregate };

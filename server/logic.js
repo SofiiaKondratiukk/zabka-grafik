@@ -181,6 +181,7 @@ function warnings(locIds, from, to, t = k => k) {
     for (const r of all("SELECT * FROM requests WHERE location_id=? AND status='pending' AND created_at <= datetime('now','-24 hours')", locId))
       out.push({ key: `req:${r.id}`, location_id: locId, date: r.date || r.created_at.slice(0, 10), kind: 'request', request_id: r.id, text: t('warn_request', { name: userName(r.user_id), type: t('rq_' + r.type) }) });
   }
+  out.push(...require('./money').warnings(locIds, from, to, t)); // премії/штрафи/мінуси/аванси
   const acked = new Set(all('SELECT key FROM acks').map(r => r.key));
   return out.filter(w => !acked.has(w.key)).sort((a, b) => a.date.localeCompare(b.date));
 }

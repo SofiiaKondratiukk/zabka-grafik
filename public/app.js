@@ -80,13 +80,13 @@ async function logout() { await api('POST', '/api/logout'); S.me = null; session
 
 const PAGES = {
   home: { fn: pageHome }, schedule: { fn: pageSchedule }, hours: { fn: pageHours }, requests: { fn: pageRequests }, notes: { fn: pageNotes },
-  warnings: { fn: pageWarnings, admin: true }, reports: { fn: pageReports, admin: true }, workers: { fn: pageWorkers, admin: true },
+  warnings: { fn: pageWarnings, admin: true }, shiftcards: { fn: pageShiftCards, admin: true }, reports: { fn: pageReports, admin: true }, workers: { fn: pageWorkers, admin: true },
   locations: { fn: pageLocations, owner: true }, months: { fn: pageMonths, admin: true }, audit: { fn: pageAudit, admin: true },
   settings: { fn: pageSettings }, notifications: { fn: pageNotifications },
 };
 function navHtml(page) {
   const items = [['home', t('nav_home')], ['schedule', t('nav_schedule')], ['hours', t('nav_hours')], ['requests', t('nav_requests')], ['notes', t('nav_notes')]];
-  if (isAdmin()) items.push(['warnings', t('nav_warnings')], ['reports', t('nav_reports')], ['workers', t('nav_workers')], ['months', t('nav_months')], ['audit', t('nav_audit')]);
+  if (isAdmin()) items.push(['shiftcards', t('nav_shiftcards')], ['warnings', t('nav_warnings')], ['reports', t('nav_reports')], ['workers', t('nav_workers')], ['months', t('nav_months')], ['audit', t('nav_audit')]);
   if (isOwner()) items.push(['locations', t('nav_locations')]);
   items.push(['settings', t('nav_settings')]);
   return items.map(([k, l]) => `<a href="#/${k}" class="${k === page ? 'on' : ''}">${l}</a>`).join('');
@@ -170,7 +170,7 @@ async function pageSchedule(el) {
   const editable = admin;
   html += `<div id="sch-err"></div><div class="tbl-wrap"><table class="t sch"><thead><tr><th>${t('day')}</th>${slots.map(s => `<th>${slotName(s)}<div class="small mute" style="font-weight:400">${s === 'dl' ? t('dl_days') : s === 'rs' ? '18:00–23:00' : s === 's1' ? '06:00/08:00–14:30' : '14:30–23:00'}</div></th>`).join('')}</tr></thead><tbody>`;
   for (const d of v.days) {
-    html += `<tr class="${d.dow === 6 ? 'sun' : ''} ${d.date === today() ? 'today' : ''}"><td class="day" data-l="">${t('dow_full_' + d.dow)} <span class="d">${ddmm(d.date)}</span>${d.closed ? ' 🔒' : ''}</td>`;
+    html += `<tr class="${d.dow === 6 ? 'sun' : ''} ${d.date === today() ? 'today' : ''}"><td class="day" data-l="">${t('dow_full_' + d.dow)} <span class="d">${ddmm(d.date)}</span>${d.closed ? ' 🔒' : ''}${admin ? ` <a href="#/shiftcards" class="small" title="${t('nav_shiftcards')}" onclick="sessionStorage.setItem('cardDate','${d.date}')">📋</a>` : ''}</td>`;
     for (const sl of slots) {
       const c = d.cells[sl];
       const w = wmap[d.date + ':' + sl];
@@ -288,14 +288,15 @@ async function pageHours(el) {
       <div class="stat"><span class="mute">${t('c_extra')}</span><b>${hmShort(T.extra)}</b></div>
       ${T.training ? `<div class="stat"><span class="mute">${t('c_training')}</span><b>${hmShort(T.training)}</b></div>` : ''}
       <div class="stat"><span class="mute">${t('c_pallets')}</span><b>${pal(T.pallets)}</b></div>
-      <div class="stat" style="border-color:var(--acc)"><span class="mute">${t('to_pay_month')}</span><b>${zl(T.sum)}</b><span class="small mute">${t('your_rate')}: ${zl(h.rate)}/${t('h')}</span></div></div>
+      <div class="stat" style="border-color:var(--acc)"><span class="mute">${t('c_earned')}</span><b>${zl(T.sum)}</b><span class="small mute">${t('your_rate')}: ${zl(h.rate)}/${t('h')}</span></div></div>
     <div class="tbl-wrap"><table class="t"><thead><tr><th>${t('c_date')}</th><th>${t('c_location')}</th><th>${t('c_shift_time')}</th><th>${t('c_hours')}</th><th>${t('c_extra')}</th><th>${t('c_pallets')}</th><th>${t('c_sum')}</th></tr></thead><tbody>
     ${h.rows.map(r => `<tr class="${r.dow === 6 ? 'sun' : ''}"><td>${ddmm(r.date)} ${t('dow_' + r.dow)}</td><td>${esc(r.location)}</td><td>${r.shifts.join(', ')}${r.planned.length ? `<span class="mute">${r.shifts.length ? ', ' : ''}${r.planned.join(', ')} (${t('planned')})</span>` : ''}</td>
       <td class="n">${r.sched ? hmShort(r.sched) : ''}</td><td class="n" title="${esc(r.adj.map(a => a.comment).join('; '))}">${r.extra ? '+' + hmShort(r.extra) : ''}${r.training ? ` <span class="mute">${t('kind_training')} ${hmShort(r.training)}</span>` : ''}</td><td class="n">${r.pallets ? pal(r.pallets) : ''}</td><td class="n">${r.sum ? zl(r.sum) : ''}</td></tr>`).join('')}
     ${h.rows.length ? '' : `<tr><td colspan="7" class="mute">${t('no_data')}</td></tr>`}
     <tr class="total"><td colspan="3">${t('total')}</td><td class="n">${hmShort(T.sched)}</td><td class="n">${hmShort(T.extra)}</td><td class="n">${pal(T.pallets)}</td><td class="n">${zl(T.sum)}</td></tr></tbody></table></div>
-    <p class="small mute">${t('auto_credit_info')}</p>`;
+    <div id="mymoney"></div><p class="small mute">${t('auto_credit_info')}</p>`;
   $('#hm', el).onchange = e => { hoursMonth = e.target.value; pageHours(el); };
+  myMoneyBlock($('#mymoney', el), hoursMonth, T.sum);
 }
 
 // ---------------- REQUESTS ----------------
@@ -407,7 +408,7 @@ function reportTable(s, opts = {}) {
   const after = (s.afterRows || []).map(r => `<tr class="bold">${s.columns.map(c => `<td class="${num(c) ? 'n' : ''}">${fmtCell(c, r[c.k], r)}</td>`).join('')}</tr>`).join('');
   return `<div class="tbl-wrap"><table class="t"><thead>${head}</thead><tbody>${rows || `<tr><td colspan="${s.columns.length}" class="mute">${t('no_data')}</td></tr>`}${tot}${after}</tbody></table></div>`;
 }
-const REPORTS = ['payroll', 'daily', 'weekly', 'deliveries', 'extra', 'requests', 'warnings', 'summary', 'compare'];
+const REPORTS = ['payroll', 'daily', 'weekly', 'deliveries', 'extra', 'money', 'requests', 'warnings', 'summary', 'compare'];
 async function pageReports(el) {
   R.month = R.month || today().slice(0, 7); R.week = R.week || weekStart(today());
   if (!R.from) { [R.from, R.to] = monthRange(R.month); }
@@ -445,7 +446,7 @@ async function pageReports(el) {
       const rep = await api('GET', `/api/reports/${R.type}?${qs()}`);
       out.innerHTML = `<p class="mute small">${esc(rep.locations)} · ${rep.from} — ${rep.to}</p>` + rep.sections.map((s, si) => `${s.title ? `<h2>${esc(s.title)}</h2>` : ''}<div data-si="${si}">${reportTable(s, {
         click: rep.clickable, status: R.type === 'payroll' && s.location_id,
-        extraCol: s.ackable ? r => `<button class="sm" data-ack="${esc(r.key)}">✓ ${t('checked_ok')}</button>` : s.deletable ? r => `<button class="sm danger" data-del="${r.id}">✕</button>` : null,
+        extraCol: s.ackable ? r => `<button class="sm" data-ack="${esc(r.key)}">✓ ${t('checked_ok')}</button>` : s.deletable ? r => `<button class="sm danger" data-del="${r.id}" data-dk="${s.deletable}">✕</button>` : null,
       })}</div>`).join('');
       $$('tr.click', out).forEach(tr => tr.onclick = e => { if (e.target.closest('.noclick')) return; detailModal(Number(tr.dataset.uid)); });
       $$('[data-st]', out).forEach(cb => cb.onchange = async () => {
@@ -453,7 +454,7 @@ async function pageReports(el) {
         await api('POST', '/api/payroll-status', { location_id: s.location_id, user_id: Number(cb.dataset.u), month: s.month, field: cb.dataset.st, value: cb.checked }); toast(t('saved'));
       });
       $$('[data-ack]', out).forEach(b => b.onclick = async () => { await api('POST', '/api/warnings/ack', { key: b.dataset.ack }); load(); });
-      $$('[data-del]', out).forEach(b => b.onclick = async () => { if (!confirm(t('delete_q'))) return; try { await api('DELETE', `/api/adjustments/${b.dataset.del}`); load(); } catch (e) { toast(e.message); } });
+      $$('[data-del]', out).forEach(b => b.onclick = async () => { if (!confirm(t('delete_q'))) return; try { await api('DELETE', b.dataset.dk === 'money' ? `/api/money/${b.dataset.del}` : `/api/adjustments/${b.dataset.del}`); load(); } catch (e) { toast(e.message); } });
       if (R.type === 'payroll') out.insertAdjacentHTML('beforeend', `<p class="small mute">${t('payroll_help')}</p>`);
     } catch (e) { out.innerHTML = errBox(e); }
   };
@@ -547,7 +548,7 @@ async function pageAudit(el) {
 // ---------------- SETTINGS ----------------
 async function pageSettings(el) {
   const u = S.me.user;
-  const cats = ['schedule', 'shift', 'decision', 'note', 'request', 'reminder'];
+  const cats = ['schedule', 'shift', 'decision', 'money', 'note', 'request', 'reminder'];
   el.innerHTML = `<h1>${t('nav_settings')}</h1>
     <div class="card"><h2 style="margin-top:0">${t('language')}</h2>${langSeg()}</div>
     <div class="card"><h2 style="margin-top:0">Telegram</h2>${u.tg_linked ? `<p>✓ ${t('tg_linked')}</p><button id="tgun">${t('tg_unlink')}</button>` : `<p class="mute">${t('tg_help')}</p><button class="pri" id="tgl">${t('tg_link')}</button><div id="tgout"></div>`}
@@ -570,6 +571,82 @@ async function pageNotifications(el) {
   const list = await api('GET', '/api/notifications');
   el.innerHTML = `<h1>${t('notifications')}</h1><div class="card list">${list.map(n => `<div class="item"><div class="grow ${n.read ? 'mute' : ''}">${n.read ? '' : '● '}${esc(n.text)}<br><span class="small mute">${lts(n.created_at)}</span></div></div>`).join('') || `<p class="mute">${t('no_data')}</p>`}</div>`;
   if (list.some(n => !n.read)) { await api('POST', '/api/notifications/read'); S.me.unread = 0; const bd = $('#bell .badge'); if (bd) bd.remove(); }
+}
+
+// ---------------- ПРЕМІЇ, ШТРАФИ, МІНУСИ, АВАНСИ ----------------
+const MK = ['bonus', 'fine', 'shortage', 'advance'];
+const signed = e => e.kind === 'advance' ? zl(e.amount) : (e.kind === 'bonus' ? '+' : '−') + zl(e.amount);
+const moneyCls = e => (e.kind === 'fine' || e.kind === 'shortage') ? 'red' : '';
+async function myMoneyBlock(box, month, earned) {
+  const m = await api('GET', `/api/my/money?month=${month}`);
+  const s = m.sums; const accrued = earned + s.bonus - s.fine - s.shortage; const left = accrued - s.advance;
+  box.innerHTML = `<h2>${t('r_money')}</h2>${m.entries.length ? `<div class="card list">${m.entries.map(e => `<div class="item"><div class="grow"><b class="${moneyCls(e)}">${t('mk_' + e.kind)} ${signed(e)}</b> <span class="mute small">${ddmm(e.date)} · ${esc(e.location)}${e.method ? ' · ' + t('method_' + e.method) : ''}${e.shift ? ' · ' + slotName(e.shift) : ''}</span><br>${esc(e.comment)}<br><span class="small mute">${t('c_entered_by')}: ${esc(e.created_name)}, ${lts(e.created_at)}</span></div></div>`).join('')}</div>` : `<p class="mute">${t('no_data')}</p>`}
+    <div class="card"><div class="tbl-wrap" style="border:0"><table class="t"><tbody>
+      <tr><td>${t('c_earned')}</td><td class="n">${zl(earned)}</td></tr>
+      <tr><td>+ ${t('c_bonus')}</td><td class="n">${zl(s.bonus)}</td></tr><tr><td>− ${t('c_fine')}</td><td class="n">${zl(s.fine)}</td></tr><tr><td>− ${t('c_shortage')}</td><td class="n">${zl(s.shortage)}</td></tr>
+      <tr class="total"><td>= ${t('c_accrued')}</td><td class="n">${zl(accrued)}</td></tr>
+      <tr><td>− ${t('advances_received')}</td><td class="n">${zl(s.advance)}</td></tr>
+      <tr class="total"><td>= ${t('left_to_pay')}</td><td class="n ${left < 0 ? 'red' : ''}">${zl(left)}</td></tr></tbody></table></div></div>`;
+}
+function moneyModal(preset, done) {
+  preset = preset || {};
+  const kind0 = preset.kind || 'bonus';
+  const b = modal(`<h2>${t('add_money')}</h2>
+    <label class="f"><span>${t('kind')}</span><select id="mk">${MK.map(k => `<option value="${k}" ${k === kind0 ? 'selected' : ''}>${t('mk_' + k)} (${k === 'bonus' ? '+' : '−'})</option>`).join('')}</select></label>
+    <div id="mone"><label class="f"><span>${t('worker')}</span><select id="mu">${S.workers.map(u => `<option value="${u.id}" ${u.id === preset.user_id ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select></label>
+      <label class="f"><span>${t('amount_zl')}</span><input type="number" id="ma" min="0.01" step="0.01"></label></div>
+    <div id="msplit"><label class="f"><span>${t('shortage_total')}</span><input type="number" id="mt" min="0.01" step="0.01"></label>
+      <div class="f"><span class="mute small">${t('split_between')}</span>${S.workers.map(u => `<div class="row" style="margin:4px 0"><label class="grow"><input type="checkbox" class="msu" value="${u.id}" ${u.id === preset.user_id ? 'checked' : ''}> ${esc(u.name)}</label><input type="number" class="msa" data-u="${u.id}" min="0" step="0.01" style="width:110px" placeholder="zł"></div>`).join('')}</div></div>
+    <label class="f" id="mdl"><span>${t('date')}</span><input type="date" id="md" value="${preset.date || today()}"></label>
+    <label class="f" id="mml"><span>${t('c_method')}</span><select id="mm"><option value="cash">${t('method_cash')}</option><option value="transfer">${t('method_transfer')}</option></select></label>
+    ${preset.shift_id ? `<p class="small">${t('c_slot')}: <b>${esc(preset.shift_text || '')}</b></p>` : `<p class="small mute" id="mnoshift">${t('shortage_from_card')}</p>`}
+    <label class="f"><span>${t('comment_required')}</span><textarea id="mc" placeholder="${t('money_placeholder')}"></textarea></label><div id="merr"></div>
+    <div class="row end"><button onclick="closeModal()">${t('cancel')}</button><button class="pri" id="mok">${t('save')}</button></div>`);
+  const sync = () => {
+    const k = $('#mk', b).value;
+    $('#mone', b).style.display = k === 'shortage' ? 'none' : '';
+    $('#msplit', b).style.display = k === 'shortage' ? '' : 'none';
+    $('#mml', b).style.display = k === 'advance' ? '' : 'none';
+    $('#mdl', b).style.display = preset.shift_id ? 'none' : '';
+    if ($('#mnoshift', b)) $('#mnoshift', b).style.display = k === 'shortage' ? '' : 'none';
+    $('#mok', b).disabled = k === 'shortage' && !preset.shift_id;
+  };
+  const resplit = () => { const sel = $$('.msu', b).filter(x => x.checked); const tot = Number($('#mt', b).value) || 0; const each = sel.length ? Math.floor(tot / sel.length * 100) / 100 : 0;
+    $$('.msa', b).forEach(i => { i.value = ''; }); sel.forEach((x, i) => { const inp = $(`.msa[data-u="${x.value}"]`, b); inp.value = (i === sel.length - 1 ? Math.round((tot - each * (sel.length - 1)) * 100) / 100 : each).toFixed(2); }); };
+  $('#mk', b).onchange = sync; $('#mt', b).oninput = resplit; $$('.msu', b).forEach(x => x.onchange = resplit); sync();
+  $('#mok', b).onclick = async () => {
+    const k = $('#mk', b).value;
+    const body = { location_id: S.loc, kind: k, comment: $('#mc', b).value, date: $('#md', b).value, shift_id: preset.shift_id || null, method: $('#mm', b).value };
+    if (k === 'shortage') body.split = $$('.msu', b).filter(x => x.checked).map(x => ({ user_id: Number(x.value), amount: Number($(`.msa[data-u="${x.value}"]`, b).value) }));
+    else { body.user_id = Number($('#mu', b).value); body.amount = Number($('#ma', b).value); }
+    try { await api('POST', '/api/money', body); closeModal(); toast(t('saved')); done && done(); } catch (e) { $('#merr', b).innerHTML = errBox(e); }
+  };
+}
+let cardDate = null;
+async function pageShiftCards(el) {
+  const pre = sessionStorage.getItem('cardDate'); if (pre) { cardDate = pre; sessionStorage.removeItem('cardDate'); }
+  cardDate = cardDate || today();
+  const d = await api('GET', `/api/shift-cards/${S.loc}?date=${cardDate}`);
+  const mrow = e => `<div class="small"><b class="${moneyCls(e)}">${t('mk_' + e.kind)} ${signed(e)}</b> ${e.kind === 'advance' && e.method ? '(' + t('method_' + e.method) + ') ' : ''}— ${esc(e.comment)} <span class="mute">(${esc(e.created_name)}, ${lts(e.created_at)})</span> ${d.closed && !isOwner() ? '' : `<button class="sm danger" data-mdel="${e.id}">✕</button>`}</div>`;
+  el.innerHTML = `<div class="row" style="justify-content:space-between"><h1>${t('nav_shiftcards')}: ${ddmm(cardDate)} ${t('dow_' + dow(cardDate))}${d.closed ? ' 🔒' : ''}</h1>
+    <div class="row"><button id="cprev">‹</button><input type="date" id="cdate" value="${cardDate}"><button id="cnext">›</button><button id="cadd" class="pri">+ ${t('add_money')}</button></div></div>
+    ${d.delivery ? `<p>📦 ${t('delivery')}: <b>${esc(d.delivery.name)}</b> — ${d.delivery.pallets != null ? pal(d.delivery.pallets) + ' ' + t('pallets_short') : '<span class="red">! ' + t('not_confirmed') + '</span>'}</p>` : ''}
+    <div class="grid2">${d.cards.map(c => `<div class="card" style="${c.cancelled ? 'opacity:.6' : ''}"><div class="row"><b class="grow">${slotName(c.slot)}</b>${c.ended ? `<span class="pill approved">${t('shift_done')}</span>` : c.cancelled ? `<span class="pill rejected">${t('cancelled')}</span>` : `<span class="pill">${t('planned')}</span>`}</div>
+      <div style="font-size:17px;margin:6px 0"><b>${esc(c.name)}</b> ${hm(c.start)}–${hm(c.end)}</div>
+      ${c.changed ? `<div class="small chg" style="color:var(--blue)">${t('plan')}: ${esc(c.plan)}</div>` : ''}
+      ${c.extra.map(a => `<div class="small">⏱ ${t('kind_' + a.kind)} +${a.minutes} ${t('min')} — ${esc(a.comment || '')} <span class="mute">(${esc(a.approved)})</span></div>`).join('')}
+      ${c.pallets != null ? `<div class="small">📦 ${pal(c.pallets)} ${t('pallets_short')}</div>` : ''}
+      ${c.money.map(mrow).join('')}
+      ${c.notes.map(n => `<div class="small note">📝 ${esc(n.time)} ${esc(n.author)}: ${esc(n.text)}${n.resolved ? ' ✓' : ''}</div>`).join('')}
+      ${d.closed && !isOwner() ? '' : `<div class="row" style="margin-top:8px"><button class="sm danger" data-short="${c.id}">− ${t('add_shortage')}</button><button class="sm" data-bonus="${c.id}">+ ${t('add_bonus')}</button></div>`}</div>`).join('') || `<p class="mute">${t('no_shifts')}</p>`}</div>`;
+  const go = dd => { cardDate = dd; pageShiftCards(el); };
+  $('#cprev', el).onclick = () => go(addDays(cardDate, -1)); $('#cnext', el).onclick = () => go(addDays(cardDate, 1)); $('#cdate', el).onchange = e => go(e.target.value);
+  const reload = () => pageShiftCards(el);
+  $('#cadd', el).onclick = () => moneyModal({ date: cardDate }, reload);
+  const card = id => d.cards.find(c => c.id === Number(id));
+  $$('[data-short]', el).forEach(btn => btn.onclick = () => { const c = card(btn.dataset.short); moneyModal({ kind: 'shortage', shift_id: c.id, user_id: c.user_id, shift_text: `${ddmm(cardDate)} ${slotName(c.slot)} ${hm(c.start)}–${hm(c.end)} · ${c.name}` }, reload); });
+  $$('[data-bonus]', el).forEach(btn => btn.onclick = () => { const c = card(btn.dataset.bonus); moneyModal({ kind: 'bonus', user_id: c.user_id, date: cardDate }, reload); });
+  $$('[data-mdel]', el).forEach(btn => btn.onclick = async () => { if (!confirm(t('delete_q'))) return; try { await api('DELETE', `/api/money/${btn.dataset.mdel}`); reload(); } catch (e) { toast(e.message); } });
 }
 
 window.closeModal = closeModal;

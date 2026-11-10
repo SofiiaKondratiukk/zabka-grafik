@@ -618,6 +618,8 @@ function remind() {
 }
 setInterval(remind, 15 * 60 * 1000);
 
+require('./money').register(app, { wrap, needAdmin, needMember, bad }); // премії, штрафи, мінуси, аванси
+
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, '..', 'public', 'index.html')));
 
 module.exports = { app, hash };

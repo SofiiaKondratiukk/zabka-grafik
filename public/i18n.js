@@ -59,6 +59,16 @@
     a_shift_correct: 'Корекція зміни', a_adjustment_add: 'Додано дод. час/навчання', a_adjustment_delete: 'Видалено дод. час/навчання', a_delivery_confirm: 'Підтверджено доставку', a_request_create: 'Новий запит', a_request_cancel: 'Запит відкликано',
     a_request_approve: 'Запит підтверджено', a_request_reject: 'Запит відхилено', a_note_add: 'Нотатка', a_note_resolve: 'Нотатку вирішено', a_warning_ack: 'Попередження перевірено', a_payroll_checked: 'Відомість: перевірено', a_payroll_paid: 'Відомість: виплачено',
     a_month_close: 'Місяць закрито', a_month_reopen: 'Місяць відкрито знову',
+
+    nav_shiftcards: 'Картки змін', c_bonus: 'Премії', c_fine: 'Штрафи', c_shortage: 'Мінуси', c_shortage_s: 'мінус', c_accrued: 'НАРАХОВАНО', c_advance: 'Аванси', c_to_pay: 'ДО ВИПЛАТИ', c_earned: 'Години + палети',
+    c_method: 'Спосіб', c_entered_by: 'Хто вписав', c_split: 'Розподіл', mk_bonus: 'Премія', mk_fine: 'Штраф', mk_shortage: 'Мінус за зміну', mk_advance: 'Аванс', method_cash: 'готівка', method_transfer: 'переказ',
+    r_money: 'Премії, штрафи, мінуси, аванси', money_by_location: 'Премії, штрафи, мінуси, аванси по локаціях', shortages_by_shift: 'Мінуси по змінах і датах', advances_received: 'Аванси отримано', left_to_pay: 'Залишилось до виплати',
+    add_money: 'Премія / штраф / аванс', amount_zl: 'Сума, zł', shortage_total: 'Сума нестачі разом, zł', split_between: 'Поділити між працівниками (суму можна змінити вручну):', shortage_from_card: 'Мінус за зміну додається з картки конкретної зміни (кнопка «− мінус»).',
+    money_placeholder: 'напр. нестача в касі 40 zł; премія за інвентаризацію', shift_done: 'відпрацьовано', add_shortage: 'мінус', add_bonus: 'премія', ncat_money: 'Премії, штрафи, мінуси, аванси',
+    n_money: '💰 {loc}: {what}{method} за {date}{shift} — {comment}', n_money_deleted: '🗑 Скасовано запис: {what} за {date}',
+    warn_advance: '{name}: аванси за {month} ({adv} zł) більші за зароблене ({earned} zł)', warn_negative: '{name}: від\'ємна сума до виплати за {month}: {sum} zł',
+    err_month_closed_money: 'Місяць {month} закрито — змінити запис може тільки власниця', err_amount: 'Сума має бути більшою за 0', err_duplicate_worker: 'Працівника вибрано двічі',
+    a_money_add: 'Премія/штраф/мінус/аванс', a_money_delete: 'Видалено премію/штраф/мінус/аванс',
   };
   const pl = {
     app_title: 'Grafik Żabka · Kraków', login: 'Login', password: 'Hasło', sign_in: 'Zaloguj', bad_login: 'Nieprawidłowy login lub hasło', logout: 'Wyloguj',
@@ -119,6 +129,16 @@
     a_shift_correct: 'Korekta zmiany', a_adjustment_add: 'Dodano dod. czas/szkolenie', a_adjustment_delete: 'Usunięto dod. czas/szkolenie', a_delivery_confirm: 'Potwierdzono dostawę', a_request_create: 'Nowy wniosek', a_request_cancel: 'Wniosek wycofany',
     a_request_approve: 'Wniosek zatwierdzony', a_request_reject: 'Wniosek odrzucony', a_note_add: 'Notatka', a_note_resolve: 'Notatka rozwiązana', a_warning_ack: 'Ostrzeżenie sprawdzone', a_payroll_checked: 'Lista płac: sprawdzone', a_payroll_paid: 'Lista płac: wypłacone',
     a_month_close: 'Miesiąc zamknięty', a_month_reopen: 'Miesiąc otwarty ponownie',
+
+    nav_shiftcards: 'Karty zmian', c_bonus: 'Premie', c_fine: 'Kary', c_shortage: 'Minusy', c_shortage_s: 'minus', c_accrued: 'NALICZONO', c_advance: 'Zaliczki', c_to_pay: 'DO WYPŁATY', c_earned: 'Godziny + palety',
+    c_method: 'Sposób', c_entered_by: 'Kto wpisał', c_split: 'Podział', mk_bonus: 'Premia', mk_fine: 'Kara', mk_shortage: 'Minus za zmianę', mk_advance: 'Zaliczka', method_cash: 'gotówka', method_transfer: 'przelew',
+    r_money: 'Premie, kary, minusy, zaliczki', money_by_location: 'Premie, kary, minusy, zaliczki wg lokalizacji', shortages_by_shift: 'Minusy wg zmian i dat', advances_received: 'Otrzymane zaliczki', left_to_pay: 'Pozostało do wypłaty',
+    add_money: 'Premia / kara / zaliczka', amount_zl: 'Kwota, zł', shortage_total: 'Łączna kwota braku, zł', split_between: 'Podziel między pracowników (kwotę można zmienić ręcznie):', shortage_from_card: 'Minus za zmianę dodaje się z karty konkretnej zmiany (przycisk „− minus”).',
+    money_placeholder: 'np. brak w kasie 40 zł; premia za inwentaryzację', shift_done: 'przepracowano', add_shortage: 'minus', add_bonus: 'premia', ncat_money: 'Premie, kary, minusy, zaliczki',
+    n_money: '💰 {loc}: {what}{method} za {date}{shift} — {comment}', n_money_deleted: '🗑 Anulowano wpis: {what} za {date}',
+    warn_advance: '{name}: zaliczki za {month} ({adv} zł) większe niż zarobione ({earned} zł)', warn_negative: '{name}: ujemna kwota do wypłaty za {month}: {sum} zł',
+    err_month_closed_money: 'Miesiąc {month} zamknięty — zmienić wpis może tylko właścicielka', err_amount: 'Kwota musi być większa od 0', err_duplicate_worker: 'Pracownik wybrany dwa razy',
+    a_money_add: 'Premia/kara/minus/zaliczka', a_money_delete: 'Usunięto premię/karę/minus/zaliczkę',
   };
   const dicts = { uk, pl };
   function tr(lang, key, params) {

@@ -16,7 +16,7 @@ const USERS = [
   { login: 'nikita', name: 'Нікіта', locs: [2, 3] },
   { login: 'kiril', name: 'Кіріл', locs: [1] },
   { login: 'violetta', name: 'Віолетта', locs: [1] },
-  { login: 'nadia', name: 'Надя', locs: [1] },
+  { login: 'nadia', name: 'Надя', locs: [1], rate: 25 },
   { login: 'khrystia', name: 'Христя', locs: [1] },
   { login: 'tioma', name: 'Тьома', locs: [2] },
   { login: 'ira', name: 'Іра', locs: [2, 3], rate: 25 },
