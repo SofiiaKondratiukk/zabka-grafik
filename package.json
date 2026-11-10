@@ -1,0 +1,21 @@
+{
+  "name": "zabka-grafik",
+  "version": "1.0.0",
+  "description": "Графік, облік часу та доставок — Żabka Kraków",
+  "main": "server/server.js",
+  "scripts": {
+    "start": "node --no-warnings server/server.js",
+    "demo": "DEMO=1 node --no-warnings server/server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "exceljs": "^4.4.0",
+    "express": "^4.22.3",
+    "pdfkit": "^0.20.2"
+  },
+  "engines": {
+    "node": ">=22.13"
+  }
+}

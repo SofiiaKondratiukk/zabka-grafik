@@ -1,0 +1,576 @@
+'use strict';
+/* global I18N_tr */
+const S = { me: null, loc: null, lang: localStorage.getItem('lang') || 'uk', workers: [] };
+const $ = (sel, el = document) => el.querySelector(sel);
+const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
+const t = (k, p) => I18N_tr(S.lang, k, p);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const hm = m => (m == null || m === '') ? '' : String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
+const hmShort = m => { if (m == null || m === '') return ''; const neg = m < 0; m = Math.abs(Math.round(m)); return (neg ? '−' : '') + Math.floor(m / 60) + ':' + String(m % 60).padStart(2, '0'); };
+const parseHM = s => { const m = /^(\d{1,2}):(\d{2})$/.exec(String(s || '').trim()); return m ? +m[1] * 60 + +m[2] : null; };
+const zl = v => (Math.round((v || 0) * 100) / 100).toFixed(2).replace('.', ',') + ' zł';
+const pal = v => String(v || 0).replace('.', ',');
+const pd = d => new Date(d + 'T00:00:00Z');
+const fd = x => x.toISOString().slice(0, 10);
+const addDays = (d, n) => { const x = pd(d); x.setUTCDate(x.getUTCDate() + n); return fd(x); };
+const dow = d => (pd(d).getUTCDay() + 6) % 7;
+const weekStart = d => addDays(d, -dow(d));
+const today = () => S.me ? S.me.now.date : fd(new Date());
+const monthRange = m => { const [y, mo] = m.split('-').map(Number); const last = new Date(Date.UTC(y, mo, 0)).getUTCDate(); return [m + '-01', m + '-' + String(last).padStart(2, '0')]; };
+const lts = s => { if (!s) return ''; const d = new Date(String(s).replace(' ', 'T') + 'Z'); return isNaN(d) ? s : d.toLocaleString(S.lang === 'pl' ? 'pl-PL' : 'uk-UA', { timeZone: 'Europe/Warsaw', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }); };
+const ddmm = d => d.slice(8, 10) + '.' + d.slice(5, 7);
+const DEF = (date, slot) => { const sun = dow(date) === 6; return slot === 's1' ? [sun ? 480 : 360, 870] : slot === 's2' ? [870, 1380] : slot === 'rs' ? [1080, 1380] : [null, null]; };
+
+async function api(method, url, body) {
+  const r = await fetch(url, { method, headers: body ? { 'content-type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined, credentials: 'same-origin' });
+  let data = null; try { data = await r.json(); } catch (_) {}
+  if (r.status === 401 && url !== '/api/login') { S.me = null; renderLogin(); throw new Error('unauthorized'); }
+  if (!r.ok) { const e = new Error((data && data.error) || r.statusText); e.data = data; throw e; }
+  return data;
+}
+function toast(msg) { const el = $('#toast'); el.textContent = msg; el.classList.remove('hidden'); clearTimeout(toast._t); toast._t = setTimeout(() => el.classList.add('hidden'), 3500); }
+function errBox(e) { const errs = e.data && e.data.errors; return `<div class="warnbox"><span class="excl">!</span>${esc(e.message)}${errs ? '<ul>' + errs.map(x => `<li>${esc(x)}</li>`).join('') + '</ul>' : ''}</div>`; }
+function modal(html, wide) { const m = $('#modal'); $('.modal-body', m).innerHTML = html; $('.modal-box', m).classList.toggle('wide', !!wide); m.classList.remove('hidden'); return $('.modal-body', m); }
+function closeModal() { $('#modal').classList.add('hidden'); }
+$('#modal .modal-x').onclick = closeModal;
+$('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
+const curLoc = () => S.me && S.me.locations.find(l => l.id === S.loc);
+const isAdmin = () => !!(curLoc() && curLoc().is_admin);
+const isOwner = () => S.me && S.me.user.role === 'owner';
+function setLang(l) { S.lang = l; localStorage.setItem('lang', l); document.documentElement.lang = l; if (S.me) api('POST', '/api/me/lang', { lang: l }); }
+
+// ---------------- boot ----------------
+async function boot() {
+  try { S.me = await api('GET', '/api/me'); } catch (e) { return renderLogin(); }
+  if (S.me.user.lang && !localStorage.getItem('lang')) S.lang = S.me.user.lang;
+  document.documentElement.lang = S.lang;
+  const saved = Number(sessionStorage.getItem('loc'));
+  S.loc = S.me.locations.some(l => l.id === saved) ? saved : null;
+  if (!S.loc) return renderPick();
+  await loadWorkers();
+  route();
+}
+async function loadWorkers() { S.workers = S.loc ? await api('GET', `/api/locations/${S.loc}/workers`) : []; }
+function renderLogin() {
+  $('#app').innerHTML = `<div class="login"><div class="row" style="justify-content:flex-end">${langSeg()}</div>
+    <div class="card"><h1>${t('app_title')}</h1><form id="lf">
+    <label class="f"><span>${t('login')}</span><input name="login" autocomplete="username" required autocapitalize="none"></label>
+    <label class="f"><span>${t('password')}</span><input name="password" type="password" autocomplete="current-password" required></label>
+    <div id="lerr"></div><button class="pri" style="width:100%;margin-top:8px">${t('sign_in')}</button></form></div></div>`;
+  bindLang(renderLogin);
+  $('#lf').onsubmit = async e => {
+    e.preventDefault(); const f = new FormData(e.target);
+    try { await api('POST', '/api/login', { login: f.get('login'), password: f.get('password') }); sessionStorage.removeItem('loc'); boot(); }
+    catch (err) { $('#lerr').innerHTML = `<div class="warnbox">${t('bad_login')}</div>`; }
+  };
+}
+const langSeg = () => `<span class="seg lang"><button data-l="uk" class="${S.lang === 'uk' ? 'on' : ''}">UA</button><button data-l="pl" class="${S.lang === 'pl' ? 'on' : ''}">PL</button></span>`;
+function bindLang(rerender) { $$('.seg.lang button').forEach(b => b.onclick = () => { setLang(b.dataset.l); rerender(); }); }
+
+function renderPick() {
+  $('#app').innerHTML = `<main><div class="row" style="justify-content:space-between"><h1>${t('pick_location')}</h1>${langSeg()}</div>
+    <div class="loc-pick">${S.me.locations.map(l => `<button data-id="${l.id}"><b>${esc(l.name)}</b><br><span class="mute small">${t('admin')}: ${esc(l.admin_name)}${l.deputy_name ? ' · ' + t('deputy') + ': ' + esc(l.deputy_name) : ''}${l.is_admin ? ' · ★' : ''}</span></button>`).join('')}
+    ${S.me.locations.length ? '' : `<div class="card">${t('no_locations')}</div>`}</div>
+    <p style="text-align:center"><button id="lo">${t('logout')}</button></p></main>`;
+  bindLang(renderPick);
+  $$('.loc-pick button').forEach(b => b.onclick = async () => { S.loc = Number(b.dataset.id); sessionStorage.setItem('loc', S.loc); await loadWorkers(); location.hash = '#/home'; route(); });
+  $('#lo').onclick = logout;
+}
+async function logout() { await api('POST', '/api/logout'); S.me = null; sessionStorage.clear(); renderLogin(); }
+
+const PAGES = {
+  home: { fn: pageHome }, schedule: { fn: pageSchedule }, hours: { fn: pageHours }, requests: { fn: pageRequests }, notes: { fn: pageNotes },
+  warnings: { fn: pageWarnings, admin: true }, reports: { fn: pageReports, admin: true }, workers: { fn: pageWorkers, admin: true },
+  locations: { fn: pageLocations, owner: true }, months: { fn: pageMonths, admin: true }, audit: { fn: pageAudit, admin: true },
+  settings: { fn: pageSettings }, notifications: { fn: pageNotifications },
+};
+function navHtml(page) {
+  const items = [['home', t('nav_home')], ['schedule', t('nav_schedule')], ['hours', t('nav_hours')], ['requests', t('nav_requests')], ['notes', t('nav_notes')]];
+  if (isAdmin()) items.push(['warnings', t('nav_warnings')], ['reports', t('nav_reports')], ['workers', t('nav_workers')], ['months', t('nav_months')], ['audit', t('nav_audit')]);
+  if (isOwner()) items.push(['locations', t('nav_locations')]);
+  items.push(['settings', t('nav_settings')]);
+  return items.map(([k, l]) => `<a href="#/${k}" class="${k === page ? 'on' : ''}">${l}</a>`).join('');
+}
+async function route() {
+  if (!S.me) return renderLogin();
+  if (!S.loc) return renderPick();
+  let page = (location.hash.replace(/^#\/?/, '').split('?')[0]) || 'home';
+  const def = PAGES[page];
+  if (!def || (def.admin && !isAdmin()) || (def.owner && !isOwner())) page = 'home';
+  $('#app').innerHTML = `<header class="top"><button class="loc" id="locbtn">📍 ${esc(curLoc().name)}</button><span class="sp"></span>
+    ${langSeg()}<button class="ic" id="bell" title="${t('notifications')}">🔔${S.me.unread ? `<span class="badge">${S.me.unread}</span>` : ''}</button><button class="ic" id="logout" title="${t('logout')}">⎋</button></header>
+    <nav class="tabs">${navHtml(page)}</nav><main id="main"><div class="loading">…</div></main>`;
+  $('#locbtn').onclick = () => { sessionStorage.removeItem('loc'); S.loc = null; renderPick(); };
+  $('#bell').onclick = () => { location.hash = '#/notifications'; };
+  $('#logout').onclick = logout;
+  bindLang(route);
+  const on = $('nav.tabs a.on'); if (on) on.scrollIntoView({ inline: 'center', block: 'nearest' });
+  try { await PAGES[page].fn($('#main')); } catch (e) { if (e.message !== 'unauthorized') $('#main').innerHTML = errBox(e); }
+}
+window.addEventListener('hashchange', route);
+const refreshMe = async () => { S.me = await api('GET', '/api/me'); };
+
+// ---------------- helpers for shifts ----------------
+function timeLabel(s) {
+  if (!s || !['s1', 's2', 'rs'].includes(s.slot)) return '';
+  const [ds, de] = DEF(s.date, s.slot);
+  if (s.start === ds && s.end === de) return '';
+  if (s.slot === 'rs' && s.end === de) return t('at_time', { t: hm(s.start) });
+  if (s.start !== ds && s.end === de) return t('from_time', { t: hm(s.start) });
+  if (s.start === ds && s.end !== de) return t('to_time', { t: hm(s.end) });
+  return hm(s.start) + '–' + hm(s.end);
+}
+const slotName = s => t('slot_' + s);
+const shiftText = s => `${ddmm(s.date)} ${t('dow_' + dow(s.date))} · ${slotName(s.slot)}${s.start != null ? ' ' + hm(s.start) + '–' + hm(s.end) : ''}${s.name ? ' · ' + s.name : ''}`;
+
+// ---------------- HOME ----------------
+async function pageHome(el) {
+  const h = await api('GET', `/api/home/${S.loc}`);
+  const me = S.me.user;
+  const cur = h.myShifts.filter(s => s.date === h.now.date && s.slot !== 'dl');
+  const next = h.myShifts.filter(s => s.slot !== 'dl' && (s.date > h.now.date || (s.date === h.now.date && s.end > h.now.min)));
+  let html = `<h1>${t('hello', { name: esc(me.name) })}</h1>`;
+  if (isAdmin()) html += `<div class="grid2" style="margin-bottom:12px">
+    <a class="stat" href="#/requests" style="text-decoration:none;color:inherit"><span class="mute">${t('pending_requests')}</span><b class="${h.pending ? 'red' : ''}">${h.pending}</b></a>
+    <a class="stat" href="#/warnings" style="text-decoration:none;color:inherit"><span class="mute">${t('nav_warnings')}</span><b class="${h.warnings ? 'red' : ''}">${h.warnings ? '! ' : ''}${h.warnings}</b></a>
+    <a class="stat" href="#/notes" style="text-decoration:none;color:inherit"><span class="mute">${t('open_notes')}</span><b>${h.openNotes}</b></a></div>`;
+  if (h.notes.length) html += `<div class="card"><h2 style="margin-top:0">📝 ${t('notes_for_you')}</h2>${h.notes.slice(0, 5).map(n => `<div class="note" style="margin:6px 0"><b>${esc(n.author)}</b> <span class="mute small">${lts(n.created_at)}</span><br>${esc(n.text)}</div>`).join('')}</div>`;
+  if (h.toConfirm.length) html += `<div class="card" style="border-color:var(--acc)"><h2 style="margin-top:0">📦 ${t('confirm_delivery')}</h2>${h.toConfirm.map(d => `<div class="row" style="margin:6px 0"><b>${ddmm(d)} ${t('dow_' + dow(d))}</b>
+    <input type="number" step="0.5" min="0" value="1" class="pal" data-d="${d}" style="width:90px"> <span class="mute">${t('pallets_short')}</span><button class="pri sm" data-confirm="${d}">${t('confirm')}</button></div>`).join('')}
+    <p class="mute small">${t('pallet_formula')}</p></div>`;
+  html += `<div class="card"><h2 style="margin-top:0">${t('my_next_shifts')}</h2>${next.length ? '<div class="list">' + next.slice(0, 6).map(s => `<div class="item"><div class="grow"><b>${ddmm(s.date)} ${t('dow_' + dow(s.date))}</b> · ${slotName(s.slot)} · ${hm(s.start)}–${hm(s.end)} <span class="mute">${esc(s.location)}</span></div></div>`).join('') + '</div>' : `<p class="mute">${t('no_shifts')}</p>`}
+    ${h.myShifts.filter(s => s.slot === 'dl' && s.date >= h.now.date).map(s => `<div class="small">📦 ${t('delivery_on', { d: ddmm(s.date) + ' ' + t('dow_' + dow(s.date)) })} (${esc(s.location)})</div>`).join('')}</div>`;
+  html += `<div class="card"><h2 style="margin-top:0">${t('today_at_location')}</h2>${h.today.length ? h.today.map(s => `<div>${slotName(s.slot)}: <b>${esc(s.name)}</b> ${s.start != null ? hm(s.start) + '–' + hm(s.end) : ''}</div>`).join('') : `<p class="mute">—</p>`}</div>`;
+  html += `<div class="card"><div class="row"><button class="pri" data-go="extra">${t('rq_btn_extra')}</button><button data-go="swap">${t('rq_btn_swap')}</button><button data-go="handover">${t('rq_btn_handover')}</button><button data-go="note">${t('leave_note')}</button></div>
+    ${h.myPending ? `<p class="small mute">${t('my_pending', { n: h.myPending })}</p>` : ''}<p class="small mute">${t('auto_credit_info')}</p></div>`;
+  el.innerHTML = html;
+  $$('[data-confirm]', el).forEach(b => b.onclick = async () => {
+    const d = b.dataset.confirm; const p = Number($(`.pal[data-d="${d}"]`, el).value);
+    if (!confirm(t('confirm_pallets_q', { p: pal(p), d: ddmm(d) }))) return;
+    try { await api('POST', '/api/deliveries', { location_id: S.loc, date: d, pallets: p }); toast(t('saved')); route(); } catch (e) { toast(e.message); }
+  });
+  $$('[data-go]', el).forEach(b => b.onclick = () => { if (b.dataset.go === 'note') location.hash = '#/notes'; else { sessionStorage.setItem('rqType', b.dataset.go); location.hash = '#/requests'; } });
+}
+
+// ---------------- SCHEDULE ----------------
+let schWeek = null;
+async function pageSchedule(el) {
+  schWeek = schWeek || weekStart(today());
+  const v = await api('GET', `/api/schedule/${S.loc}?week=${schWeek}`);
+  const admin = isAdmin();
+  const loc = v.location;
+  const slots = ['s1', 's2', 'dl'].concat(loc.has_restock ? ['rs'] : []);
+  const end = addDays(schWeek, 6);
+  const wmap = {}; (v.warnings || []).forEach(w => { if (w.kind === 'empty') wmap[w.date + ':' + w.slot] = w; if (w.kind === 'delivery') wmap[w.date + ':dl'] = w; });
+  let html = `<div class="row" style="justify-content:space-between"><h1>${t('nav_schedule')}: ${ddmm(schWeek)} – ${ddmm(end)}.${end.slice(0, 4)}</h1>
+    <div class="row"><button id="wprev">‹</button><button id="wnow">${t('this_week')}</button><button id="wnext">›</button></div></div>
+    <div class="row" style="margin-bottom:10px">${v.status === 'published' ? `<span class="pill pub">${t('published')}</span>` : v.status === 'hidden' ? `<span class="pill draft">${t('not_published_yet')}</span>` : `<span class="pill draft">${t('draft')}</span>`}
+    ${admin ? `<span class="small mute">${t('sched_rules_info')}</span>` : ''}</div>`;
+  if (v.status === 'hidden') { el.innerHTML = html + `<div class="card mute">${t('schedule_hidden')}</div>`; bindWeekNav(el); return; }
+  const editable = admin;
+  html += `<div id="sch-err"></div><div class="tbl-wrap"><table class="t sch"><thead><tr><th>${t('day')}</th>${slots.map(s => `<th>${slotName(s)}<div class="small mute" style="font-weight:400">${s === 'dl' ? t('dl_days') : s === 'rs' ? '18:00–23:00' : s === 's1' ? '06:00/08:00–14:30' : '14:30–23:00'}</div></th>`).join('')}</tr></thead><tbody>`;
+  for (const d of v.days) {
+    html += `<tr class="${d.dow === 6 ? 'sun' : ''} ${d.date === today() ? 'today' : ''}"><td class="day" data-l="">${t('dow_full_' + d.dow)} <span class="d">${ddmm(d.date)}</span>${d.closed ? ' 🔒' : ''}</td>`;
+    for (const sl of slots) {
+      const c = d.cells[sl];
+      const w = wmap[d.date + ':' + sl];
+      const lab = slotName(sl);
+      if (editable) {
+        const [ds, de] = DEF(d.date, sl);
+        const st = c ? c.start : ds, en = c ? c.end : de;
+        const custom = c && sl !== 'dl' && (c.start !== ds || c.end !== de);
+        html += `<td data-l="${lab}" class="${sl === 'dl' && d.delivery_day ? 'dl-day' : ''}"><div class="cell ${c && c.user_id ? '' : 'empty'}" data-date="${d.date}" data-slot="${sl}">
+          <div class="row" style="gap:4px;flex-wrap:nowrap">${w ? `<span class="excl" title="${esc(w.text)}">!</span>` : ''}<select class="who" ${d.closed ? 'disabled' : ''}><option value="">—</option>${S.workers.map(u => `<option value="${u.id}" ${c && c.user_id === u.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}${c && c.user_id && !S.workers.some(u => u.id === c.user_id) ? `<option value="${c.user_id}" selected>${esc(c.name)}</option>` : ''}</select>
+          ${sl !== 'dl' ? `<button class="sm tbtn" type="button" title="${t('custom_time')}">⏱</button>` : ''}</div>
+          ${sl !== 'dl' ? `<div class="times" style="${custom ? '' : 'display:none'}"><input type="time" class="st" value="${hm(st)}" ${d.closed ? 'disabled' : ''}>–<input type="time" class="en" value="${hm(en)}" ${d.closed ? 'disabled' : ''}></div>` : ''}
+          ${c && c.cancelled ? `<span class="small red">✕ ${t('cancelled')}</span>` : ''}
+          ${c && c.plan_user_id && (c.plan_user_id !== c.user_id || c.plan_start !== c.start || c.plan_end !== c.end) ? `<span class="chg">${t('plan')}: ${esc(c.plan_name)} ${hm(c.plan_start)}–${hm(c.plan_end)}</span>` : ''}
+          ${sl === 'dl' && d.delivery ? `<span class="small">📦 ${pal(d.delivery.pallets)} ${t('pallets_short')} (${esc(d.delivery.name)})</span>` : ''}
+          ${v.status === 'published' && c && c.id && !d.closed && sl !== 'dl' ? `<div class="acts"><button class="sm" data-fix="${c.id}">✎ ${t('fact')}</button></div>` : ''}
+          ${v.status === 'published' && sl === 'dl' && !d.closed && (c || d.delivery) && d.date <= today() ? `<div class="acts"><button class="sm" data-pal="${d.date}">📦 ${t('pallets_short')}</button></div>` : ''}
+          ${w ? `<span class="small red">${esc(w.text)}</span>` : ''}
+        </div></td>`;
+      } else {
+        const mine = c && c.user_id === S.me.user.id;
+        html += `<td data-l="${lab}" class="${sl === 'dl' && d.delivery_day ? 'dl-day' : ''}"><div class="cell ${c && c.user_id ? '' : 'empty'}">${c && c.user_id ? `<span class="nm ${c.cancelled ? 'cancel' : ''}"><span class="${mine ? 'me' : ''}">${esc(c.name)}</span></span>${timeLabel(c) ? `<span class="tm">${esc(timeLabel(c))}</span>` : ''}` : '<span class="mute">—</span>'}
+          ${sl === 'dl' && d.delivery && d.delivery.pallets != null && mine ? `<span class="small">📦 ${pal(d.delivery.pallets)}</span>` : ''}</div></td>`;
+      }
+    }
+    html += '</tr>';
+  }
+  html += `</tbody></table></div>`;
+  if (editable) html += `<div class="row" style="margin-top:12px"><button id="copyprev">${t('copy_prev_week')}</button><span class="grow"></span>
+     <button id="save" class="${v.status === 'published' ? 'pri' : ''}">${v.status === 'published' ? t('save_published') : t('save_draft')}</button>${v.status !== 'published' ? `<button id="publish" class="pri">${t('publish')}</button>` : ''}
+     <button id="addadj">+ ${t('add_extra_admin')}</button></div><p class="small mute">${t('sched_admin_help')}</p>`;
+  el.innerHTML = html;
+  bindWeekNav(el);
+  if (!editable) return;
+  // custom time toggles + auto handover
+  $$('.cell', el).forEach(c => {
+    const tb = $('.tbtn', c); if (tb) tb.onclick = () => { const x = $('.times', c); x.style.display = x.style.display === 'none' ? '' : 'none'; };
+    const st = $('.st', c), en = $('.en', c);
+    const other = slot => $(`.cell[data-date="${c.dataset.date}"][data-slot="${slot}"]`, el);
+    if (c.dataset.slot === 's1' && en) en.onchange = () => { const o = other('s2'); if (o) { $('.st', o).value = en.value; $('.times', o).style.display = ''; } };
+    if (c.dataset.slot === 's2' && st) st.onchange = () => { const o = other('s1'); if (o) { $('.en', o).value = st.value; $('.times', o).style.display = ''; } };
+  });
+  const collect = () => $$('.cell', el).map(c => ({ date: c.dataset.date, slot: c.dataset.slot, user_id: $('.who', c).value || null, start: $('.st', c) ? $('.st', c).value : null, end: $('.en', c) ? $('.en', c).value : null }));
+  const save = async publish => {
+    try { await api('PUT', `/api/schedule/${S.loc}`, { week: schWeek, cells: collect(), publish }); toast(publish ? t('published_ok') : t('saved')); pageSchedule(el); }
+    catch (e) { $('#sch-err').innerHTML = errBox(e); $('#sch-err').scrollIntoView({ behavior: 'smooth' }); }
+  };
+  $('#save').onclick = () => save(false);
+  if ($('#publish')) $('#publish').onclick = () => { if (confirm(t('publish_q'))) save(true); };
+  $('#copyprev').onclick = async () => {
+    const pv = await api('GET', `/api/schedule/${S.loc}?week=${addDays(schWeek, -7)}`);
+    pv.days.forEach((d, i) => {
+      const date = addDays(schWeek, i);
+      for (const sl of slots) {
+        const c = $(`.cell[data-date="${date}"][data-slot="${sl}"]`, el); if (!c || $('.who', c).disabled) continue;
+        const src = d.cells[sl];
+        $('.who', c).value = src && src.plan_user_id ? String(src.plan_user_id) : '';
+        if (sl !== 'dl') { const [ds, de] = DEF(date, sl); const s0 = src && src.plan_start != null ? src.plan_start : ds, e0 = src && src.plan_end != null ? src.plan_end : de; $('.st', c).value = hm(s0); $('.en', c).value = hm(e0); $('.times', c).style.display = (s0 !== ds || e0 !== de) ? '' : 'none'; }
+      }
+    });
+    toast(t('copied_check'));
+  };
+  $$('[data-fix]', el).forEach(b => b.onclick = () => fixShiftModal(v, Number(b.dataset.fix), () => pageSchedule(el)));
+  $$('[data-pal]', el).forEach(b => b.onclick = () => palletModal(b.dataset.pal, v, () => pageSchedule(el)));
+  $('#addadj').onclick = () => adjModal(() => pageSchedule(el));
+}
+function bindWeekNav(el) {
+  $('#wprev', el).onclick = () => { schWeek = addDays(schWeek, -7); pageSchedule(el); };
+  $('#wnext', el).onclick = () => { schWeek = addDays(schWeek, 7); pageSchedule(el); };
+  $('#wnow', el).onclick = () => { schWeek = weekStart(today()); pageSchedule(el); };
+}
+function fixShiftModal(v, id, done) {
+  let c; v.days.forEach(d => Object.values(d.cells).forEach(x => { if (x.id === id) c = x; }));
+  const b = modal(`<h2>${t('fact_correction')}</h2><p class="mute small">${t('fact_help')}</p><p><b>${shiftText({ ...c, name: c.name })}</b></p>
+    <label class="f"><span>${t('worker')}</span><select id="fu">${S.workers.map(u => `<option value="${u.id}" ${u.id === c.user_id ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select></label>
+    <div class="row"><label class="f grow"><span>${t('start')}</span><input type="time" id="fs" value="${hm(c.start)}"></label><label class="f grow"><span>${t('end')}</span><input type="time" id="fe" value="${hm(c.end)}"></label></div>
+    <label class="f"><input type="checkbox" id="fn" checked> ${t('move_neighbour')}</label>
+    <label class="f"><input type="checkbox" id="fc" ${c.cancelled ? 'checked' : ''}> ${t('noshow_cancel')}</label>
+    <label class="f"><span>${t('comment_required')}</span><textarea id="fcm"></textarea></label><div id="ferr"></div>
+    <div class="row end"><button onclick="closeModal()">${t('cancel')}</button><button class="pri" id="fok">${t('save')}</button></div>`);
+  $('#fok', b).onclick = async () => {
+    try { await api('POST', `/api/shifts/${id}/correct`, { user_id: $('#fu', b).value, start: $('#fs', b).value, end: $('#fe', b).value, cancelled: $('#fc', b).checked, moveNeighbour: $('#fn', b).checked, comment: $('#fcm', b).value }); closeModal(); toast(t('saved')); done(); }
+    catch (e) { $('#ferr', b).innerHTML = errBox(e); }
+  };
+}
+function palletModal(date, v, done) {
+  const d = v.days.find(x => x.date === date);
+  const cur = d.delivery || {}; const who = (d.cells.dl && d.cells.dl.user_id) || cur.user_id;
+  const b = modal(`<h2>📦 ${t('delivery')} ${ddmm(date)}</h2>
+    <label class="f"><span>${t('worker')}</span><select id="pu">${S.workers.map(u => `<option value="${u.id}" ${u.id === who ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select></label>
+    <label class="f"><span>${t('pallets_count')}</span><input type="number" step="0.5" min="0" id="pp" value="${cur.pallets ?? 1}"></label><p class="small mute">${t('pallet_formula')}</p><div id="perr"></div>
+    <div class="row end"><button onclick="closeModal()">${t('cancel')}</button><button class="pri" id="pok">${t('save')}</button></div>`);
+  $('#pok', b).onclick = async () => { try { await api('POST', '/api/deliveries', { location_id: S.loc, date, user_id: $('#pu', b).value, pallets: Number($('#pp', b).value) }); closeModal(); toast(t('saved')); done(); } catch (e) { $('#perr', b).innerHTML = errBox(e); } };
+}
+function adjModal(done, preset = {}) {
+  const b = modal(`<h2>${t('add_extra_admin')}</h2>
+    <label class="f"><span>${t('kind')}</span><select id="ak"><option value="extra">${t('kind_extra')}</option><option value="training" ${preset.kind === 'training' ? 'selected' : ''}>${t('kind_training')}</option></select></label>
+    <label class="f"><span>${t('worker')}</span><select id="au">${S.workers.map(u => `<option value="${u.id}">${esc(u.name)}</option>`).join('')}</select></label>
+    <label class="f"><span>${t('date')}</span><input type="date" id="ad" value="${today()}"></label>
+    <label class="f"><span>${t('minutes')}</span><input type="number" id="am" min="1" step="5" value="20"></label>
+    <label class="f"><span>${t('comment_required')}</span><textarea id="ac"></textarea></label><div id="aerr"></div>
+    <div class="row end"><button onclick="closeModal()">${t('cancel')}</button><button class="pri" id="aok">${t('save')}</button></div>`);
+  $('#aok', b).onclick = async () => { try { await api('POST', '/api/adjustments', { location_id: S.loc, kind: $('#ak', b).value, user_id: $('#au', b).value, date: $('#ad', b).value, minutes: Number($('#am', b).value), comment: $('#ac', b).value }); closeModal(); toast(t('saved')); done && done(); } catch (e) { $('#aerr', b).innerHTML = errBox(e); } };
+}
+
+// ---------------- MY HOURS ----------------
+let hoursMonth = null;
+async function pageHours(el) {
+  hoursMonth = hoursMonth || today().slice(0, 7);
+  const h = await api('GET', `/api/my/hours?month=${hoursMonth}`);
+  const T = h.totals;
+  el.innerHTML = `<div class="row" style="justify-content:space-between"><h1>${t('nav_hours')}</h1><input type="month" id="hm" value="${hoursMonth}"></div>
+    <div class="grid2" style="margin-bottom:12px">
+      <div class="stat"><span class="mute">${t('c_sched')}</span><b>${hmShort(T.sched)}</b></div>
+      <div class="stat"><span class="mute">${t('c_extra')}</span><b>${hmShort(T.extra)}</b></div>
+      ${T.training ? `<div class="stat"><span class="mute">${t('c_training')}</span><b>${hmShort(T.training)}</b></div>` : ''}
+      <div class="stat"><span class="mute">${t('c_pallets')}</span><b>${pal(T.pallets)}</b></div>
+      <div class="stat" style="border-color:var(--acc)"><span class="mute">${t('to_pay_month')}</span><b>${zl(T.sum)}</b><span class="small mute">${t('your_rate')}: ${zl(h.rate)}/${t('h')}</span></div></div>
+    <div class="tbl-wrap"><table class="t"><thead><tr><th>${t('c_date')}</th><th>${t('c_location')}</th><th>${t('c_shift_time')}</th><th>${t('c_hours')}</th><th>${t('c_extra')}</th><th>${t('c_pallets')}</th><th>${t('c_sum')}</th></tr></thead><tbody>
+    ${h.rows.map(r => `<tr class="${r.dow === 6 ? 'sun' : ''}"><td>${ddmm(r.date)} ${t('dow_' + r.dow)}</td><td>${esc(r.location)}</td><td>${r.shifts.join(', ')}${r.planned.length ? `<span class="mute">${r.shifts.length ? ', ' : ''}${r.planned.join(', ')} (${t('planned')})</span>` : ''}</td>
+      <td class="n">${r.sched ? hmShort(r.sched) : ''}</td><td class="n" title="${esc(r.adj.map(a => a.comment).join('; '))}">${r.extra ? '+' + hmShort(r.extra) : ''}${r.training ? ` <span class="mute">${t('kind_training')} ${hmShort(r.training)}</span>` : ''}</td><td class="n">${r.pallets ? pal(r.pallets) : ''}</td><td class="n">${r.sum ? zl(r.sum) : ''}</td></tr>`).join('')}
+    ${h.rows.length ? '' : `<tr><td colspan="7" class="mute">${t('no_data')}</td></tr>`}
+    <tr class="total"><td colspan="3">${t('total')}</td><td class="n">${hmShort(T.sched)}</td><td class="n">${hmShort(T.extra)}</td><td class="n">${pal(T.pallets)}</td><td class="n">${zl(T.sum)}</td></tr></tbody></table></div>
+    <p class="small mute">${t('auto_credit_info')}</p>`;
+  $('#hm', el).onchange = e => { hoursMonth = e.target.value; pageHours(el); };
+}
+
+// ---------------- REQUESTS ----------------
+const statusPill = s => `<span class="pill ${s}">${t('status_' + s)}</span>`;
+async function pageRequests(el) {
+  const admin = isAdmin();
+  let html = `<h1>${t('nav_requests')}</h1>`;
+  html += `<div class="card"><h2 style="margin-top:0">${t('new_request')}</h2><div class="typebtns">${['extra', 'swap', 'handover', 'early', 'pallets', 'training'].map(x => `<button data-type="${x}"><b>${t('rq_' + x)}</b><br><span class="small mute">${t('rqh_' + x)}</span></button>`).join('')}</div><div id="rqform"></div></div>`;
+  if (admin) html += `<div class="row"><h2 class="grow">${t('incoming_requests')}</h2><span class="seg" id="rqf"><button data-s="pending" class="on">${t('status_pending')}</button><button data-s="">${t('all')}</button></span></div><div id="inbox"></div>`;
+  html += `<h2>${t('my_requests')}</h2><div id="mine"></div>`;
+  el.innerHTML = html;
+  $$('.typebtns button', el).forEach(b => b.onclick = () => { $$('.typebtns button', el).forEach(x => x.classList.toggle('on', x === b)); requestForm($('#rqform', el), b.dataset.type, () => pageRequests(el)); });
+  const pre = sessionStorage.getItem('rqType'); if (pre) { sessionStorage.removeItem('rqType'); const b = $(`.typebtns button[data-type="${pre}"]`, el); if (b) b.click(); }
+  const mine = await api('GET', `/api/requests?loc=${S.loc}&mine=1`);
+  $('#mine', el).innerHTML = mine.length ? `<div class="card list">${mine.map(r => `<div class="item"><div class="grow"><b>${t('rq_' + r.type)}</b> ${statusPill(r.status)} <span class="mute small">${esc(r.location)} · ${lts(r.created_at)}</span><br>${esc(r.desc)}${r.comment ? `<br><span class="mute">${esc(r.comment)}</span>` : ''}
+    ${r.decided_name && r.status !== 'cancelled' ? `<br><span class="small">${t('decided_by')}: ${esc(r.decided_name)} ${lts(r.decided_at)}${r.decision_comment ? ' — ' + esc(r.decision_comment) : ''}</span>` : ''}</div>
+    ${r.status === 'pending' ? `<button class="sm" data-cancel="${r.id}">${t('withdraw')}</button>` : ''}</div>`).join('')}</div>` : `<p class="mute">${t('no_data')}</p>`;
+  $$('[data-cancel]', el).forEach(b => b.onclick = async () => { await api('POST', `/api/requests/${b.dataset.cancel}/cancel`); pageRequests(el); });
+  if (admin) {
+    const load = async status => {
+      const list = await api('GET', `/api/requests?loc=${S.loc}${status ? '&status=' + status : ''}`);
+      const box = $('#inbox', el);
+      box.innerHTML = list.length ? `<div class="card list">${list.map(r => {
+        const old = r.status === 'pending' && (Date.now() - new Date(r.created_at.replace(' ', 'T') + 'Z').getTime()) > 864e5;
+        return `<div class="item" data-id="${r.id}"><div class="grow">${old ? '<span class="excl">!</span>' : ''}<b>${esc(r.user_name)}</b> — ${t('rq_' + r.type)} ${statusPill(r.status)} <span class="mute small">#${r.id} · ${lts(r.created_at)}</span><br>${esc(r.desc)}${r.comment ? `<br>💬 ${esc(r.comment)}` : ''}
+        ${r.status === 'pending' ? `<div class="row" style="margin-top:6px"><input class="dc grow" placeholder="${t('decision_comment_opt')}"><button class="pri sm" data-ok="${r.id}">✓ ${t('approve')}</button><button class="danger sm" data-no="${r.id}">✕ ${t('reject')}</button></div><div class="derr"></div>` : `<br><span class="small mute">${esc(r.decided_name)} ${lts(r.decided_at)} ${esc(r.decision_comment || '')}</span>`}</div></div>`;
+      }).join('')}</div>` : `<p class="mute">${t('no_requests')}</p>`;
+      $$('[data-ok],[data-no]', box).forEach(b => b.onclick = async () => {
+        const item = b.closest('.item'); const id = b.dataset.ok || b.dataset.no;
+        try { await api('POST', `/api/requests/${id}/decide`, { approve: !!b.dataset.ok, comment: $('.dc', item).value }); toast(t('saved')); load(status); }
+        catch (e) { $('.derr', item).innerHTML = errBox(e); }
+      });
+    };
+    $$('#rqf button', el).forEach(b => b.onclick = () => { $$('#rqf button', el).forEach(x => x.classList.toggle('on', x === b)); load(b.dataset.s); });
+    load('pending');
+  }
+}
+async function requestForm(box, type, done) {
+  const me = S.me.user.id;
+  let html = `<div style="margin-top:12px">`;
+  let shifts = [];
+  if (['swap', 'handover', 'early'].includes(type)) {
+    shifts = (await api('GET', `/api/shifts?loc=${S.loc}`)).filter(s => s.slot !== 'dl');
+    const mineS = shifts.filter(s => s.user_id === me), others = shifts.filter(s => s.user_id !== me && s.date >= addDays(today(), -3));
+    if (type === 'swap') html += `<label class="f"><span>${t('shift_to_take')}</span><select id="rs">${others.map(s => `<option value="${s.id}">${esc(shiftText(s))}</option>`).join('')}</select></label>
+      <label class="f"><span>${t('swap_my_shift_opt')}</span><select id="rss"><option value="">— ${t('no_swap')} —</option>${mineS.filter(s => s.date >= today()).map(s => `<option value="${s.id}">${esc(shiftText(s))}</option>`).join('')}</select></label>`;
+    else html += `<label class="f"><span>${t('my_shift')}</span><select id="rs">${mineS.filter(s => s.date <= today()).reverse().concat(mineS.filter(s => s.date > today())).map(s => `<option value="${s.id}" ${s.date === today() ? 'selected' : ''}>${esc(shiftText(s))}</option>`).join('')}</select></label>`;
+    if (type === 'handover') html += `<label class="f"><span>${t('worked_until')}</span><input type="time" id="rt" value="15:00"></label><p class="small mute">${t('handover_help')}</p>`;
+    if (type === 'early') html += `<label class="f"><input type="checkbox" id="rn"> ${t('noshow')}</label><label class="f" id="rtl"><span>${t('left_at')}</span><input type="time" id="rt" value="12:00"></label>`;
+  } else if (type === 'pallets') {
+    html += `<label class="f"><span>${t('date')}</span><input type="date" id="rd" value="${today()}"></label><label class="f"><span>${t('pallets_correct')}</span><input type="number" step="0.5" min="0" id="rp" value="1"></label>`;
+  } else {
+    html += `<label class="f"><span>${t('date')}</span><input type="date" id="rd" value="${today()}"></label><label class="f"><span>${t('minutes')}</span><input type="number" min="1" step="5" id="rm" value="${type === 'training' ? 60 : 20}"></label>`;
+  }
+  html += `<label class="f"><span>${['extra', 'training'].includes(type) ? t('what_done_required') : t('comment_opt')}</span><textarea id="rc" placeholder="${type === 'extra' ? t('extra_placeholder') : ''}"></textarea></label><div id="rerr"></div>
+    <button class="pri" id="rsend">${t('send_request')}</button></div>`;
+  box.innerHTML = html;
+  if ($('#rn', box)) $('#rn', box).onchange = e => { $('#rtl', box).style.display = e.target.checked ? 'none' : ''; };
+  if ($('#rs', box) && !$('#rs', box).options.length) $('#rerr', box).innerHTML = `<div class="warnbox">${t('no_shifts_to_pick')}</div>`;
+  $('#rsend', box).onclick = async () => {
+    const v = id => $(id, box) ? $(id, box).value : undefined;
+    const body = { location_id: S.loc, type, shift_id: v('#rs'), swap_shift_id: v('#rss') || null, time: v('#rt'), noshow: $('#rn', box) ? $('#rn', box).checked : false, date: v('#rd'), minutes: v('#rm'), pallets: v('#rp'), comment: v('#rc') };
+    try { await api('POST', '/api/requests', body); toast(t('request_sent')); done(); } catch (e) { $('#rerr', box).innerHTML = errBox(e); }
+  };
+}
+
+// ---------------- NOTES ----------------
+async function pageNotes(el) {
+  const notes = await api('GET', `/api/notes?loc=${S.loc}`);
+  const admin = isAdmin();
+  el.innerHTML = `<h1>${t('nav_notes')}</h1><div class="card"><label class="f"><span>${t('note_for_next')}</span><textarea id="nt" maxlength="500" placeholder="${t('note_placeholder')}"></textarea></label><button class="pri" id="ns">${t('send')}</button></div>
+    <div class="card list">${notes.map(n => `<div class="item"><div class="grow ${n.resolved_at ? 'mute' : ''}"><b>${esc(n.author)}</b> <span class="small mute">${lts(n.created_at)}</span><br>${esc(n.text)}${n.resolved_at ? `<br><span class="small">✓ ${t('resolved')}: ${esc(n.resolver)} ${lts(n.resolved_at)}</span>` : ''}</div>
+    ${admin && !n.resolved_at ? `<button class="sm" data-res="${n.id}">✓ ${t('mark_resolved')}</button>` : ''}</div>`).join('') || `<p class="mute">${t('no_data')}</p>`}</div>`;
+  $('#ns', el).onclick = async () => { const text = $('#nt', el).value.trim(); if (!text) return; try { await api('POST', '/api/notes', { location_id: S.loc, text }); toast(t('saved')); pageNotes(el); } catch (e) { toast(e.message); } };
+  $$('[data-res]', el).forEach(b => b.onclick = async () => { await api('POST', `/api/notes/${b.dataset.res}/resolve`); pageNotes(el); });
+}
+
+// ---------------- WARNINGS ----------------
+async function pageWarnings(el) {
+  const all = isOwner() && el.dataset.all === '1';
+  const list = await api('GET', `/api/warnings?loc=${all ? 'all' : S.loc}`);
+  el.innerHTML = `<div class="row"><h1 class="grow">${t('nav_warnings')}</h1>${isOwner() ? `<label><input type="checkbox" id="wall" ${all ? 'checked' : ''}> ${t('all_locations')}</label>` : ''}</div>
+    <p class="small mute">${t('warnings_help')}</p>
+    <div class="card list">${list.map(w => `<div class="item"><span class="excl">!</span><div class="grow red"><b>${ddmm(w.date)} ${t('dow_' + dow(w.date))}</b> ${all ? '· ' + esc(w.location) : ''} — ${esc(w.text)}</div><button class="sm" data-ack="${esc(w.key)}">✓ ${t('checked_ok')}</button></div>`).join('') || `<div class="okbox">✓ ${t('no_warnings')}</div>`}</div>`;
+  if ($('#wall', el)) $('#wall', el).onchange = e => { el.dataset.all = e.target.checked ? '1' : ''; pageWarnings(el); };
+  $$('[data-ack]', el).forEach(b => b.onclick = async () => { await api('POST', '/api/warnings/ack', { key: b.dataset.ack }); pageWarnings(el); });
+}
+
+// ---------------- REPORTS ----------------
+const R = { type: 'payroll', mode: 'month', month: null, week: null, from: null, to: null, user: '', all: false };
+const fmtCell = (c, v, row) => {
+  if (v == null || v === '') return '';
+  if (row && row._money && typeof v === 'number') return v.toFixed(2).replace('.', ',');
+  switch (c.t) { case 'hm': case 'hmd': return typeof v === 'number' ? hmShort(v) : esc(v); case 'money': return typeof v === 'number' ? v.toFixed(2).replace('.', ',') : esc(v); case 'dec': return typeof v === 'number' ? v.toFixed(2).replace('.', ',') : esc(v); case 'pallets': return pal(v); default: return esc(v); }
+};
+function reportTable(s, opts = {}) {
+  const num = c => ['hm', 'hmd', 'money', 'dec', 'int', 'pallets'].includes(c.t);
+  let head;
+  if (s.grouped) {
+    let g = '<tr>'; let i = 0; const cols = s.columns;
+    while (i < cols.length) { let j = i; while (cols[i].group && j + 1 < cols.length && cols[j + 1].group === cols[i].group) j++; g += `<th colspan="${j - i + 1}" style="text-align:center">${esc(cols[i].group || cols[i].l)}</th>`; i = j + 1; }
+    head = g + '</tr><tr>' + cols.map(c => `<th>${esc(c.group ? c.sub : '')}</th>`).join('') + '</tr>';
+  } else head = '<tr>' + s.columns.map(c => `<th>${esc(c.l)}</th>`).join('') + (opts.extraCol ? '<th></th>' : '') + '</tr>';
+  const rows = s.rows.map((r, ri) => `<tr class="${r._cls || ''} ${opts.click && r._uid ? 'click' : ''}" data-ri="${ri}" ${r._uid ? `data-uid="${r._uid}"` : ''}>${s.columns.map(c => {
+    if (c.ui === 'status' && opts.status) return `<td style="white-space:nowrap" class="noclick"><label><input type="checkbox" data-st="checked" data-u="${r.user_id}" ${r.checked_at ? 'checked' : ''}> ${t('st_checked')}</label> <label><input type="checkbox" data-st="paid" data-u="${r.user_id}" ${r.paid_at ? 'checked' : ''}> ${t('st_paid')}</label><div class="small mute">${esc(r.status || '')}</div></td>`;
+    return `<td class="${num(c) ? 'n' : ''}">${c.bold ? '<b>' : ''}${fmtCell(c, r[c.k])}${c.bold ? '</b>' : ''}</td>`;
+  }).join('')}${opts.extraCol ? `<td class="noclick">${opts.extraCol(r)}</td>` : ''}</tr>`).join('');
+  const tot = s.totalRow ? `<tr class="total">${s.columns.map(c => `<td class="${num(c) ? 'n' : ''}">${fmtCell(c, s.totalRow[c.k])}</td>`).join('')}${opts.extraCol ? '<td></td>' : ''}</tr>` : '';
+  const after = (s.afterRows || []).map(r => `<tr class="bold">${s.columns.map(c => `<td class="${num(c) ? 'n' : ''}">${fmtCell(c, r[c.k], r)}</td>`).join('')}</tr>`).join('');
+  return `<div class="tbl-wrap"><table class="t"><thead>${head}</thead><tbody>${rows || `<tr><td colspan="${s.columns.length}" class="mute">${t('no_data')}</td></tr>`}${tot}${after}</tbody></table></div>`;
+}
+const REPORTS = ['payroll', 'daily', 'weekly', 'deliveries', 'extra', 'requests', 'warnings', 'summary', 'compare'];
+async function pageReports(el) {
+  R.month = R.month || today().slice(0, 7); R.week = R.week || weekStart(today());
+  if (!R.from) { [R.from, R.to] = monthRange(R.month); }
+  el.innerHTML = `<h1>${t('nav_reports')}</h1><div class="card"><div class="row">
+    <select id="rt">${REPORTS.filter(r => r !== 'summary' || isOwner()).map(r => `<option value="${r}" ${R.type === r ? 'selected' : ''}>${t('r_' + r)}</option>`).join('')}</select>
+    <span class="seg" id="rmode"><button data-m="week" class="${R.mode === 'week' ? 'on' : ''}">${t('week')}</button><button data-m="month" class="${R.mode === 'month' ? 'on' : ''}">${t('month')}</button><button data-m="custom" class="${R.mode === 'custom' ? 'on' : ''}">${t('custom_dates')}</button></span>
+    <span id="rper"></span>
+    <select id="ru"><option value="">${t('all_workers')}</option>${S.workers.map(u => `<option value="${u.id}" ${String(R.user) === String(u.id) ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select>
+    ${isOwner() ? `<label><input type="checkbox" id="rall" ${R.all ? 'checked' : ''}> ${t('all_locations')}</label>` : ''}
+    </div><div class="row" style="margin-top:10px"><button id="xpdf">⬇ PDF</button><button id="xxlsx">⬇ XLSX</button><button id="xods">⬇ ODS</button><span class="small mute">${t('export_help')}</span></div></div><div id="rout" class="rep"><div class="loading">…</div></div>`;
+  const per = $('#rper', el);
+  const drawPer = () => {
+    if (R.mode === 'month') per.innerHTML = `<input type="month" id="pm" value="${R.month}">`;
+    else if (R.mode === 'week') per.innerHTML = `<button id="pw1" class="sm">‹</button> <input type="date" id="pw" value="${R.week}"> <button id="pw2" class="sm">›</button>`;
+    else per.innerHTML = `<input type="date" id="pf" value="${R.from}"> – <input type="date" id="pt" value="${R.to}">`;
+    if ($('#pm', per)) $('#pm', per).onchange = e => { R.month = e.target.value; [R.from, R.to] = monthRange(R.month); load(); };
+    if ($('#pw', per)) { const setW = w => { R.week = weekStart(w); R.from = R.week; R.to = addDays(R.week, 6); drawPer(); load(); }; $('#pw', per).onchange = e => setW(e.target.value); $('#pw1', per).onclick = () => setW(addDays(R.week, -7)); $('#pw2', per).onclick = () => setW(addDays(R.week, 7)); }
+    if ($('#pf', per)) { $('#pf', per).onchange = e => { R.from = e.target.value; load(); }; $('#pt', per).onchange = e => { R.to = e.target.value; load(); }; }
+  };
+  $$('#rmode button', el).forEach(b => b.onclick = () => {
+    R.mode = b.dataset.m; $$('#rmode button', el).forEach(x => x.classList.toggle('on', x === b));
+    if (R.mode === 'month') [R.from, R.to] = monthRange(R.month); if (R.mode === 'week') { R.from = R.week; R.to = addDays(R.week, 6); }
+    drawPer(); load();
+  });
+  $('#rt', el).onchange = e => { R.type = e.target.value; if (R.type === 'weekly' && R.mode !== 'week') { R.mode = 'week'; R.from = R.week; R.to = addDays(R.week, 6); pageReports(el); return; } load(); };
+  $('#ru', el).onchange = e => { R.user = e.target.value; load(); };
+  if ($('#rall', el)) $('#rall', el).onchange = e => { R.all = e.target.checked; load(); };
+  const qs = () => `loc=${R.all ? 'all' : S.loc}&from=${R.from}&to=${R.to}${R.user ? '&user=' + R.user : ''}`;
+  $('#xpdf', el).onclick = () => { location.href = `/api/export/${R.type}?${qs()}&format=pdf`; };
+  $('#xxlsx', el).onclick = () => { location.href = `/api/export/${R.type}?${qs()}&format=xlsx`; };
+  $('#xods', el).onclick = () => { location.href = `/api/export/${R.type}?${qs()}&format=ods`; };
+  const load = async () => {
+    const out = $('#rout', el); out.innerHTML = '<div class="loading">…</div>';
+    try {
+      const rep = await api('GET', `/api/reports/${R.type}?${qs()}`);
+      out.innerHTML = `<p class="mute small">${esc(rep.locations)} · ${rep.from} — ${rep.to}</p>` + rep.sections.map((s, si) => `${s.title ? `<h2>${esc(s.title)}</h2>` : ''}<div data-si="${si}">${reportTable(s, {
+        click: rep.clickable, status: R.type === 'payroll' && s.location_id,
+        extraCol: s.ackable ? r => `<button class="sm" data-ack="${esc(r.key)}">✓ ${t('checked_ok')}</button>` : s.deletable ? r => `<button class="sm danger" data-del="${r.id}">✕</button>` : null,
+      })}</div>`).join('');
+      $$('tr.click', out).forEach(tr => tr.onclick = e => { if (e.target.closest('.noclick')) return; detailModal(Number(tr.dataset.uid)); });
+      $$('[data-st]', out).forEach(cb => cb.onchange = async () => {
+        const si = cb.closest('[data-si]').dataset.si; const s = rep.sections[si];
+        await api('POST', '/api/payroll-status', { location_id: s.location_id, user_id: Number(cb.dataset.u), month: s.month, field: cb.dataset.st, value: cb.checked }); toast(t('saved'));
+      });
+      $$('[data-ack]', out).forEach(b => b.onclick = async () => { await api('POST', '/api/warnings/ack', { key: b.dataset.ack }); load(); });
+      $$('[data-del]', out).forEach(b => b.onclick = async () => { if (!confirm(t('delete_q'))) return; try { await api('DELETE', `/api/adjustments/${b.dataset.del}`); load(); } catch (e) { toast(e.message); } });
+      if (R.type === 'payroll') out.insertAdjacentHTML('beforeend', `<p class="small mute">${t('payroll_help')}</p>`);
+    } catch (e) { out.innerHTML = errBox(e); }
+  };
+  drawPer(); load();
+  async function detailModal(uid) {
+    const rep = await api('GET', `/api/reports/detail?${qs().replace(/&user=\d+/, '')}&user=${uid}`);
+    const b = modal(`<h2>${esc(rep.title)}</h2>${rep.sections.map(s => `<p class="mute small">${esc(s.title)}</p>${reportTable(s)}`).join('')}
+      <div class="row" style="margin-top:10px"><a class="small" href="/api/export/detail?${qs().replace(/&user=\d+/, '')}&user=${uid}&format=pdf">⬇ PDF</a> <a class="small" href="/api/export/detail?${qs().replace(/&user=\d+/, '')}&user=${uid}&format=xlsx">⬇ XLSX</a></div>`, true);
+  }
+}
+
+// ---------------- WORKERS ----------------
+async function pageWorkers(el) {
+  const users = await api('GET', '/api/users');
+  const locs = S.me.locations;
+  const rates = S.me.can_rates;
+  const adminLocs = locs.filter(l => l.is_admin);
+  el.innerHTML = `<div class="row"><h1 class="grow">${t('nav_workers')}</h1><button class="pri" id="uadd">+ ${t('add_worker')}</button></div>
+    <div class="tbl-wrap"><table class="t"><thead><tr><th>${t('name')}</th><th>${t('login')}</th><th>${t('c_locations')}</th>${rates ? `<th>${t('c_rate')}</th><th>${t('c_trate')}</th>` : ''}<th>Telegram</th><th>${t('status')}</th><th></th></tr></thead><tbody>
+    ${users.map(u => `<tr class="${u.active ? '' : 'mute'}"><td><b>${esc(u.name)}</b>${u.role === 'owner' ? ' ★' : ''}</td><td>${esc(u.login)}</td><td>${u.locations.map(id => esc((locs.find(l => l.id === id) || {}).name || '#' + id)).join(', ')}</td>
+      ${rates ? `<td class="n">${u.rate != null ? zl(u.rate) : ''}</td><td class="n">${u.training_rate != null ? zl(u.training_rate) : ''}</td>` : ''}<td>${u.tg_linked ? '✓' : '—'}</td><td>${u.active ? t('active') : t('inactive')}</td><td><button class="sm" data-edit="${u.id}">✎</button></td></tr>`).join('')}
+    </tbody></table></div><p class="small mute">${t('workers_help')}</p>`;
+  const edit = u => {
+    const isNew = !u; u = u || { active: 1, locations: [S.loc], rate: 31.4, training_rate: 20 };
+    const b = modal(`<h2>${isNew ? t('add_worker') : esc(u.name)}</h2>
+      <label class="f"><span>${t('name')}</span><input id="un" value="${esc(u.name || '')}"></label>
+      ${isNew ? `<label class="f"><span>${t('login')}</span><input id="ul" autocapitalize="none"></label>` : ''}
+      <label class="f"><span>${isNew ? t('password') : t('new_password_opt')}</span><input id="up" type="text" autocomplete="new-password"></label>
+      <div class="f"><span class="mute small">${t('c_locations')}</span><br>${adminLocs.map(l => `<label style="margin-right:12px"><input type="checkbox" class="ulc" value="${l.id}" ${u.locations.includes(l.id) ? 'checked' : ''}> ${esc(l.name)}</label>`).join('')}</div>
+      ${rates ? `<div class="row"><label class="f grow"><span>${t('c_rate')} (zł/${t('h')})</span><input id="ur" type="number" step="0.1" value="${u.rate ?? ''}"></label><label class="f grow"><span>${t('c_trate')} (zł/${t('h')})</span><input id="utr" type="number" step="0.1" value="${u.training_rate ?? ''}"></label></div>` : ''}
+      ${isOwner() && !isNew && u.role !== 'owner' ? `<label class="f"><input type="checkbox" id="ucr" ${u.can_rates ? 'checked' : ''}> ${t('allow_rates')}</label>` : ''}
+      ${!isNew ? `<label class="f"><input type="checkbox" id="ua" ${u.active ? 'checked' : ''}> ${t('active')} <span class="small mute">(${t('deactivate_help')})</span></label>` : ''}
+      <div id="uerr"></div><div class="row end"><button onclick="closeModal()">${t('cancel')}</button><button class="pri" id="uok">${t('save')}</button></div>`);
+    $('#uok', b).onclick = async () => {
+      const body = { name: $('#un', b).value, password: $('#up', b).value || undefined, locations: $$('.ulc', b).filter(x => x.checked).map(x => Number(x.value)) };
+      if (rates) { body.rate = Number($('#ur', b).value); body.training_rate = Number($('#utr', b).value); }
+      if ($('#ucr', b)) body.can_rates = $('#ucr', b).checked;
+      if ($('#ua', b)) body.active = $('#ua', b).checked;
+      try { if (isNew) { body.login = $('#ul', b).value; await api('POST', '/api/users', body); } else await api('PUT', `/api/users/${u.id}`, body); closeModal(); toast(t('saved')); await loadWorkers(); pageWorkers(el); }
+      catch (e) { $('#uerr', b).innerHTML = errBox(e); }
+    };
+  };
+  $('#uadd', el).onclick = () => edit(null);
+  $$('[data-edit]', el).forEach(b => b.onclick = () => edit(users.find(u => u.id === Number(b.dataset.edit))));
+}
+
+// ---------------- LOCATIONS (owner) ----------------
+async function pageLocations(el) {
+  const [locs, users] = await Promise.all([api('GET', '/api/locations'), api('GET', '/api/users')]);
+  const opts = (sel) => `<option value="">—</option>` + users.filter(u => u.active).map(u => `<option value="${u.id}" ${u.id === sel ? 'selected' : ''}>${esc(u.name)}</option>`).join('');
+  el.innerHTML = `<div class="row"><h1 class="grow">${t('nav_locations')}</h1><button class="pri" id="ladd">+ ${t('add_location')}</button></div>
+    <div class="card list">${locs.map(l => `<div class="item"><div class="grow"><b>${esc(l.name)}</b> ${l.active ? '' : `<span class="pill">${t('inactive')}</span>`}<br><span class="small">${t('admin')}: ${esc(l.admin_name || '—')}${l.deputy_name ? ` · ${t('deputy')}: ${esc(l.deputy_name)}` : ''} · ${t('restock_col')}: ${l.has_restock ? '✓' : '—'}</span></div><button class="sm" data-e="${l.id}">✎</button></div>`).join('')}</div>
+    <p class="small mute">${t('locations_help')}</p>`;
+  const edit = l => {
+    const isNew = !l; l = l || { name: '', active: 1, has_restock: 0 };
+    const b = modal(`<h2>${isNew ? t('add_location') : esc(l.name)}</h2>
+      <label class="f"><span>${t('name')}</span><input id="ln" value="${esc(l.name)}"></label>
+      <label class="f"><span>${t('admin')}</span><select id="la">${opts(l.admin_id)}</select></label>
+      <label class="f"><span>${t('deputy')} <span class="small">(${t('deputy_help')})</span></span><select id="ld">${opts(l.deputy_id)}</select></label>
+      <label class="f"><input type="checkbox" id="lr" ${l.has_restock ? 'checked' : ''}> ${t('restock_col')}</label>
+      ${!isNew ? `<label class="f"><input type="checkbox" id="lac" ${l.active ? 'checked' : ''}> ${t('active')}</label>` : ''}
+      <div id="lerr"></div><div class="row end"><button onclick="closeModal()">${t('cancel')}</button><button class="pri" id="lok">${t('save')}</button></div>`);
+    $('#lok', b).onclick = async () => {
+      const body = { name: $('#ln', b).value, admin_id: $('#la', b).value || null, deputy_id: $('#ld', b).value || null, has_restock: $('#lr', b).checked, active: $('#lac', b) ? $('#lac', b).checked : true };
+      try { if (isNew) await api('POST', '/api/locations', body); else await api('PUT', `/api/locations/${l.id}`, body); closeModal(); await refreshMe(); pageLocations(el); } catch (e) { $('#lerr', b).innerHTML = errBox(e); }
+    };
+  };
+  $('#ladd', el).onclick = () => edit(null);
+  $$('[data-e]', el).forEach(b => b.onclick = () => edit(locs.find(l => l.id === Number(b.dataset.e))));
+}
+
+// ---------------- MONTHS ----------------
+async function pageMonths(el) {
+  const closed = await api('GET', `/api/months?loc=${S.loc}`);
+  const months = []; let m = today().slice(0, 7);
+  for (let i = 0; i < 6; i++) { months.push(m); const [y, mo] = m.split('-').map(Number); m = fd(new Date(Date.UTC(y, mo - 2, 1))).slice(0, 7); }
+  el.innerHTML = `<h1>${t('nav_months')}</h1><p class="small mute">${t('months_help')}</p><div class="card list">${months.map(mm => { const c = closed.find(x => x.month === mm); return `<div class="item"><div class="grow"><b>${mm}</b> ${c ? `🔒 <span class="small">${t('closed_by')}: ${esc(c.closed_name)} ${lts(c.closed_at)}</span>` : `<span class="small mute">${t('open')}</span>`}</div>
+    ${c ? (isOwner() ? `<button class="sm" data-re="${mm}">${t('reopen')}</button>` : '') : `<button class="sm pri" data-cl="${mm}">${t('close_month')}</button>`}</div>`; }).join('')}</div>`;
+  $$('[data-cl]', el).forEach(b => b.onclick = async () => { if (!confirm(t('close_month_q', { m: b.dataset.cl }))) return; await api('POST', '/api/months/close', { location_id: S.loc, month: b.dataset.cl }); pageMonths(el); });
+  $$('[data-re]', el).forEach(b => b.onclick = async () => { await api('POST', '/api/months/reopen', { location_id: S.loc, month: b.dataset.re }); pageMonths(el); });
+}
+
+// ---------------- AUDIT ----------------
+async function pageAudit(el) {
+  const rows = await api('GET', `/api/audit?loc=${S.loc}`);
+  const fmtD = d => { try { const o = JSON.parse(d); return Object.entries(o).map(([k, v]) => `<b>${esc(k)}</b>: ${esc(typeof v === 'object' ? JSON.stringify(v) : v)}`).join(' · '); } catch (_) { return esc(d); } };
+  el.innerHTML = `<h1>${t('nav_audit')}</h1><div class="tbl-wrap"><table class="t"><thead><tr><th>${t('when')}</th><th>${t('who')}</th><th>${t('action')}</th><th>${t('c_details')}</th></tr></thead><tbody>
+    ${rows.map(r => `<tr><td style="white-space:nowrap">${lts(r.at)}</td><td>${esc(r.user_name || '')}</td><td>${esc(t('a_' + r.action))}</td><td class="small" style="overflow-wrap:anywhere">${fmtD(r.details)}</td></tr>`).join('')}</tbody></table></div>`;
+}
+
+// ---------------- SETTINGS ----------------
+async function pageSettings(el) {
+  const u = S.me.user;
+  const cats = ['schedule', 'shift', 'decision', 'note', 'request', 'reminder'];
+  el.innerHTML = `<h1>${t('nav_settings')}</h1>
+    <div class="card"><h2 style="margin-top:0">${t('language')}</h2>${langSeg()}</div>
+    <div class="card"><h2 style="margin-top:0">Telegram</h2>${u.tg_linked ? `<p>✓ ${t('tg_linked')}</p><button id="tgun">${t('tg_unlink')}</button>` : `<p class="mute">${t('tg_help')}</p><button class="pri" id="tgl">${t('tg_link')}</button><div id="tgout"></div>`}
+      <h2>${t('notif_settings')}</h2>${cats.map(c => `<label class="f"><input type="checkbox" class="nc" value="${c}" ${u.notify[c] === false ? '' : 'checked'}> ${t('ncat_' + c)}</label>`).join('')}</div>
+    <div class="card"><h2 style="margin-top:0">${t('change_password')}</h2><label class="f"><span>${t('old_password')}</span><input type="password" id="po"></label><label class="f"><span>${t('new_password')}</span><input type="password" id="pn"></label><div id="perr"></div><button id="psave">${t('save')}</button></div>
+    <div class="card"><button id="lo2">${t('logout')}</button></div>`;
+  bindLang(route);
+  if ($('#tgl', el)) $('#tgl', el).onclick = async () => {
+    const r = await api('POST', '/api/me/tg-code');
+    $('#tgout', el).innerHTML = r.link ? `<p><a class="pri" href="${r.link}" target="_blank" rel="noopener">${t('tg_open_bot')}</a></p><p class="small mute">${t('tg_after')}</p>` : `<div class="warnbox">${t('tg_not_configured')}</div>`;
+  };
+  if ($('#tgun', el)) $('#tgun', el).onclick = async () => { await api('POST', '/api/me/tg-unlink'); await refreshMe(); pageSettings(el); };
+  $$('.nc', el).forEach(cb => cb.onchange = async () => { const o = {}; $$('.nc', el).forEach(x => { if (!x.checked) o[x.value] = false; }); await api('POST', '/api/me/notify', o); await refreshMe(); toast(t('saved')); });
+  $('#psave', el).onclick = async () => { try { await api('POST', '/api/me/password', { old: $('#po', el).value, password: $('#pn', el).value }); toast(t('saved')); $('#po', el).value = $('#pn', el).value = ''; } catch (e) { $('#perr', el).innerHTML = errBox(e); } };
+  $('#lo2', el).onclick = logout;
+}
+
+// ---------------- NOTIFICATIONS ----------------
+async function pageNotifications(el) {
+  const list = await api('GET', '/api/notifications');
+  el.innerHTML = `<h1>${t('notifications')}</h1><div class="card list">${list.map(n => `<div class="item"><div class="grow ${n.read ? 'mute' : ''}">${n.read ? '' : '● '}${esc(n.text)}<br><span class="small mute">${lts(n.created_at)}</span></div></div>`).join('') || `<p class="mute">${t('no_data')}</p>`}</div>`;
+  if (list.some(n => !n.read)) { await api('POST', '/api/notifications/read'); S.me.unread = 0; const bd = $('#bell .badge'); if (bd) bd.remove(); }
+}
+
+window.closeModal = closeModal;
+boot();
