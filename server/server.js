@@ -635,7 +635,8 @@ function remind() {
 setInterval(remind, 15 * 60 * 1000);
 
 require('./money').register(app, { wrap, needAdmin, needMember, bad });
-const avail = require('./avail'); avail.register(app, { wrap, needAdmin, needMember, bad, forbid }); // диспозиція // премії, штрафи, мінуси, аванси
+const avail = require('./avail'); avail.register(app, { wrap, needAdmin, needMember, bad, forbid }); // диспозиція
+require('./tasks').register(app, { wrap, needAdmin, needMember, bad, forbid }); // завдання від адміністратора // премії, штрафи, мінуси, аванси
 
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, '..', 'public', 'index.html')));
 

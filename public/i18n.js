@@ -86,6 +86,15 @@
     err_last_admin: 'Має залишитися хоча б один адміністратор',
     is_admin_role: 'Адміністратор', is_admin_help: 'повний доступ до всіх локацій, ставок, звітів і налаштувань',
     notif_locations: 'Сповіщення з локацій', notif_locations_help: 'Запити й нотатки з вашої закріпленої локації приходять завжди. Увімкніть інші локації, якщо хочете отримувати й їхні сповіщення. На права доступу це не впливає.', notif_home_loc: 'ваша закріплена локація',
+    nav_tasks: 'Завдання', tasks_from_admin: 'Завдання від адміністратора', tk_new: 'Нове завдання', tk_edit: 'Редагувати завдання', tk_for: 'Для кого',
+    tk_target_slot: 'Зміна', tk_target_user: 'Працівник', tk_target_all: 'Усі того дня', tk_all: 'усі, хто працює того дня',
+    tk_text: 'Текст завдання', tk_text_ph: 'напр. перерахувати напої в холодильнику; помити вітрину', tk_due_opt: 'До котрої години (необов\'язково)', tk_until: 'до {t}',
+    tk_help: 'Завдання на зміну отримує той, хто реально стоїть на цій зміні за графіком (після замін і пересменок). Сповіщення — на початку зміни.',
+    tk_pending: 'очікує', tk_done: 'виконано', tk_failed: 'не виконано', tk_overdue: 'не виконано до кінця зміни', tk_all_status: 'Усі статуси',
+    tk_mark_done: 'Виконано', tk_mark_failed: 'Не виконано', tk_comment_ph: 'Коментар (напр. молока не вистачає 10 шт)', tk_created: 'Створив(-ла)', tk_edited: 'Змінив(-ла)',
+    ncat_task: 'Завдання від адміністратора', n_task: '📋 {loc} — завдання: {text}{due}', n_task_done: '✅ {name} виконав(-ла) завдання ({date}): {text}{comment}', n_task_failed: '❌ {name}: завдання не виконано ({date}): {text}{comment}',
+    err_task_target: 'Оберіть, для кого завдання', err_task_text: 'Впишіть текст завдання', err_task_done: 'Завдання вже виконано — змінити не можна',
+    a_task_create: 'Створено завдання', a_task_edit: 'Змінено завдання', a_task_delete: 'Видалено завдання', a_task_done: 'Завдання виконано', a_task_failed: 'Завдання не виконано',
     a_avail_set: 'Змінено доступність', a_avail_copy: 'Доступність скопійовано з минулого тижня', a_avail_fill: 'Доступність на весь тиждень', a_avail_settings: 'Змінено дедлайн диспозиції',
   };
   const pl = {
@@ -174,6 +183,15 @@
     err_last_admin: 'Musi zostać co najmniej jeden administrator',
     is_admin_role: 'Administrator', is_admin_help: 'pełny dostęp do wszystkich lokalizacji, stawek, raportów i ustawień',
     notif_locations: 'Powiadomienia z lokalizacji', notif_locations_help: 'Wnioski i notatki z twojej przypisanej lokalizacji przychodzą zawsze. Włącz inne lokalizacje, jeśli chcesz dostawać też ich powiadomienia. Nie wpływa to na uprawnienia.', notif_home_loc: 'twoja przypisana lokalizacja',
+    nav_tasks: 'Zadania', tasks_from_admin: 'Zadania od administratora', tk_new: 'Nowe zadanie', tk_edit: 'Edytuj zadanie', tk_for: 'Dla kogo',
+    tk_target_slot: 'Zmiana', tk_target_user: 'Pracownik', tk_target_all: 'Wszyscy tego dnia', tk_all: 'wszyscy pracujący tego dnia',
+    tk_text: 'Treść zadania', tk_text_ph: 'np. przeliczyć napoje w lodówce; umyć witrynę', tk_due_opt: 'Do której godziny (opcjonalnie)', tk_until: 'do {t}',
+    tk_help: 'Zadanie na zmianę otrzymuje osoba, która faktycznie jest na tej zmianie wg grafiku (po zastępstwach). Powiadomienie — na początku zmiany.',
+    tk_pending: 'oczekuje', tk_done: 'wykonane', tk_failed: 'niewykonane', tk_overdue: 'niewykonane do końca zmiany', tk_all_status: 'Wszystkie statusy',
+    tk_mark_done: 'Wykonane', tk_mark_failed: 'Niewykonane', tk_comment_ph: 'Komentarz (np. brakuje 10 szt. mleka)', tk_created: 'Utworzył(a)', tk_edited: 'Zmienił(a)',
+    ncat_task: 'Zadania od administratora', n_task: '📋 {loc} — zadanie: {text}{due}', n_task_done: '✅ {name} wykonał(a) zadanie ({date}): {text}{comment}', n_task_failed: '❌ {name}: zadanie niewykonane ({date}): {text}{comment}',
+    err_task_target: 'Wybierz, dla kogo jest zadanie', err_task_text: 'Wpisz treść zadania', err_task_done: 'Zadanie już wykonane — nie można zmienić',
+    a_task_create: 'Utworzono zadanie', a_task_edit: 'Zmieniono zadanie', a_task_delete: 'Usunięto zadanie', a_task_done: 'Zadanie wykonane', a_task_failed: 'Zadanie niewykonane',
     a_avail_set: 'Zmieniono dyspozycję', a_avail_copy: 'Dyspozycja skopiowana z poprzedniego tygodnia', a_avail_fill: 'Dyspozycja na cały tydzień', a_avail_settings: 'Zmieniono termin dyspozycji',
   };
   const dicts = { uk, pl };

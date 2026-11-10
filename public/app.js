@@ -79,14 +79,14 @@ function renderPick() {
 async function logout() { await api('POST', '/api/logout'); S.me = null; sessionStorage.clear(); renderLogin(); }
 
 const PAGES = {
-  home: { fn: pageHome }, schedule: { fn: pageSchedule }, avail: { fn: pageMyAvail }, disposition: { fn: pageDisposition, admin: true }, hours: { fn: pageHours }, requests: { fn: pageRequests }, notes: { fn: pageNotes },
+  home: { fn: pageHome }, schedule: { fn: pageSchedule }, avail: { fn: pageMyAvail }, disposition: { fn: pageDisposition, admin: true }, tasks: { fn: pageTasks, admin: true }, hours: { fn: pageHours }, requests: { fn: pageRequests }, notes: { fn: pageNotes },
   warnings: { fn: pageWarnings, admin: true }, shiftcards: { fn: pageShiftCards, admin: true }, reports: { fn: pageReports, admin: true }, workers: { fn: pageWorkers, admin: true },
   locations: { fn: pageLocations, owner: true }, months: { fn: pageMonths, admin: true }, audit: { fn: pageAudit, admin: true },
   settings: { fn: pageSettings }, notifications: { fn: pageNotifications },
 };
 function navHtml(page) {
   const items = [['home', t('nav_home')], ['schedule', t('nav_schedule')], ['avail', t('nav_avail')], ['hours', t('nav_hours')], ['requests', t('nav_requests')], ['notes', t('nav_notes')]];
-  if (isAdmin()) items.push(['disposition', t('nav_disposition')], ['shiftcards', t('nav_shiftcards')], ['warnings', t('nav_warnings')], ['reports', t('nav_reports')], ['workers', t('nav_workers')], ['months', t('nav_months')], ['audit', t('nav_audit')]);
+  if (isAdmin()) items.push(['tasks', t('nav_tasks')], ['disposition', t('nav_disposition')], ['shiftcards', t('nav_shiftcards')], ['warnings', t('nav_warnings')], ['reports', t('nav_reports')], ['workers', t('nav_workers')], ['months', t('nav_months')], ['audit', t('nav_audit')]);
   if (isOwner()) items.push(['locations', t('nav_locations')]);
   items.push(['settings', t('nav_settings')]);
   return items.map(([k, l]) => `<a href="#/${k}" class="${k === page ? 'on' : ''}">${l}</a>`).join('');
@@ -134,6 +134,7 @@ async function pageHome(el) {
     <a class="stat" href="#/requests" style="text-decoration:none;color:inherit"><span class="mute">${t('pending_requests')}</span><b class="${h.pending ? 'red' : ''}">${h.pending}</b></a>
     <a class="stat" href="#/warnings" style="text-decoration:none;color:inherit"><span class="mute">${t('nav_warnings')}</span><b class="${h.warnings ? 'red' : ''}">${h.warnings ? '! ' : ''}${h.warnings}</b></a>
     <a class="stat" href="#/notes" style="text-decoration:none;color:inherit"><span class="mute">${t('open_notes')}</span><b>${h.openNotes}</b></a></div>`;
+  html += '<div id="mytasks"></div>'; // завдання від адміністратора
   if (h.notes.length) html += `<div class="card"><h2 style="margin-top:0">📝 ${t('notes_for_you')}</h2>${h.notes.slice(0, 5).map(n => `<div class="note" style="margin:6px 0"><b>${esc(n.author)}</b> <span class="mute small">${lts(n.created_at)}</span><br>${esc(n.text)}</div>`).join('')}</div>`;
   if (h.toConfirm.length) html += `<div class="card" style="border-color:var(--acc)"><h2 style="margin-top:0">📦 ${t('confirm_delivery')}</h2>${h.toConfirm.map(d => `<div class="row" style="margin:6px 0"><b>${ddmm(d)} ${t('dow_' + dow(d))}</b>
     <input type="number" step="0.5" min="0" value="1" class="pal" data-d="${d}" style="width:90px"> <span class="mute">${t('pallets_short')}</span><button class="pri sm" data-confirm="${d}">${t('confirm')}</button></div>`).join('')}
@@ -144,6 +145,7 @@ async function pageHome(el) {
   html += `<div class="card"><div class="row"><button class="pri" data-go="extra">${t('rq_btn_extra')}</button><button data-go="swap">${t('rq_btn_swap')}</button><button data-go="handover">${t('rq_btn_handover')}</button><button data-go="note">${t('leave_note')}</button></div>
     ${h.myPending ? `<p class="small mute">${t('my_pending', { n: h.myPending })}</p>` : ''}<p class="small mute">${t('auto_credit_info')}</p></div>`;
   el.innerHTML = html;
+  myTasksBlock($('#mytasks', el));
   $$('[data-confirm]', el).forEach(b => b.onclick = async () => {
     const d = b.dataset.confirm; const p = Number($(`.pal[data-d="${d}"]`, el).value);
     if (!confirm(t('confirm_pallets_q', { p: pal(p), d: ddmm(d) }))) return;
@@ -550,7 +552,7 @@ async function pageAudit(el) {
 // ---------------- SETTINGS ----------------
 async function pageSettings(el) {
   const u = S.me.user;
-  const cats = ['schedule', 'shift', 'decision', 'money', 'avail', 'note', 'request', 'reminder'];
+  const cats = ['schedule', 'shift', 'decision', 'money', 'avail', 'task', 'note', 'request', 'reminder'];
   el.innerHTML = `<h1>${t('nav_settings')}</h1>
     <div class="card"><h2 style="margin-top:0">${t('language')}</h2>${langSeg()}</div>
     <div class="card"><h2 style="margin-top:0">Telegram</h2>${u.tg_linked ? `<p>✓ ${t('tg_linked')}</p><button id="tgun">${t('tg_unlink')}</button>` : `<p class="mute">${t('tg_help')}</p><button class="pri" id="tgl">${t('tg_link')}</button><div id="tgout"></div>`}
@@ -800,6 +802,81 @@ async function pageDisposition(el) {
     const get = availEditor($('#fed', b), null);
     $('#fok', b).onclick = async () => { const v = get(); if (!v) return; try { await api('POST', `/api/avail/user/${btn.dataset.fill}/fill`, { week: dispWeek, ...v }); closeModal(); toast(t('saved')); pageDisposition(el); } catch (e) { $('#ferr', b).innerHTML = errBox(e); } };
   });
+}
+
+// ---------------- ЗАВДАННЯ ВІД АДМІНІСТРАТОРА ----------------
+const tkStatus = x => x.status === 'done' ? `<span class="pill approved">✓ ${t('tk_done')}</span>` : x.status === 'failed' ? `<span class="pill rejected">✕ ${t('tk_failed')}</span>` : `<span class="pill pending">${t('tk_pending')}</span>`;
+/** Блок на головному екрані працівника. */
+async function myTasksBlock(box) {
+  const list = await api('GET', `/api/tasks/my?loc=${S.loc}`);
+  if (!list.length) { box.innerHTML = ''; return; }
+  box.innerHTML = `<div class="card" style="border-color:var(--blue)"><h2 style="margin-top:0">📋 ${t('tasks_from_admin')}</h2>${list.map(x => `<div class="taskitem" data-id="${x.id}" style="border-left:3px solid var(--blue);padding-left:10px;margin:10px 0">
+      <div class="row"><b class="grow">${esc(x.text)}</b>${tkStatus(x)}</div>
+      <div class="small mute">${esc(x.target_label)}${x.due ? ' · ' + t('tk_until', { t: x.due }) : ''} · ${esc(x.created_name)}</div>
+      ${x.status === 'pending' ? `<input class="tkc" maxlength="300" placeholder="${t('tk_comment_ph')}" style="width:100%;margin-top:6px">
+        <div class="row" style="margin-top:6px"><button class="pri sm tkok">✓ ${t('tk_mark_done')}</button><button class="danger sm tkno">✕ ${t('tk_mark_failed')}</button></div><div class="tkerr"></div>`
+        : `<div class="small">${esc(x.done_name)}, ${lts(x.done_at)}${x.result_comment ? ' — ' + esc(x.result_comment) : ''}</div>`}</div>`).join('')}</div>`;
+  $$('.taskitem', box).forEach(it => {
+    const send = async done => {
+      try { await api('POST', `/api/tasks/${it.dataset.id}/result`, { done, comment: $('.tkc', it).value }); toast(t('saved')); myTasksBlock(box); }
+      catch (e) { $('.tkerr', it).innerHTML = errBox(e); }
+    };
+    if ($('.tkok', it)) { $('.tkok', it).onclick = () => send(true); $('.tkno', it).onclick = () => send(false); }
+  });
+}
+function taskModal(task, done) {
+  const x = task || { location_id: S.loc, date: today(), target: 'slot', slot: 's1', text: '', due: '' };
+  const b = modal(`<h2>${task ? t('tk_edit') : t('tk_new')}</h2>
+    <label class="f"><span>${t('c_location')}</span><select id="tl">${S.me.locations.map(l => `<option value="${l.id}" ${l.id === x.location_id ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select></label>
+    <label class="f"><span>${t('date')}</span><input type="date" id="td" value="${x.date}"></label>
+    <div class="f"><span class="mute small">${t('tk_for')}</span><div class="seg" id="tt" style="margin-top:4px">${['slot', 'user', 'all'].map(k => `<button type="button" data-k="${k}" class="${x.target === k ? 'on' : ''}">${t('tk_target_' + k)}</button>`).join('')}</div></div>
+    <label class="f" id="tsl"><span>${t('c_slot')}</span><select id="ts">${['s1', 's2', 'rs', 'dl'].map(sl => `<option value="${sl}" ${x.slot === sl ? 'selected' : ''}>${slotName(sl)}</option>`).join('')}</select></label>
+    <label class="f" id="tul"><span>${t('worker')}</span><select id="tu"></select></label>
+    <label class="f"><span>${t('tk_text')}</span><textarea id="tx" maxlength="500" placeholder="${t('tk_text_ph')}">${esc(x.text)}</textarea></label>
+    <label class="f"><span>${t('tk_due_opt')}</span><input type="time" id="tdue" value="${x.due || ''}"></label>
+    <p class="small mute">${t('tk_help')}</p><div id="terr"></div>
+    <div class="row end"><button onclick="closeModal()">${t('cancel')}</button><button class="pri" id="tok">${t('save')}</button></div>`);
+  let target = x.target;
+  const loadWorkers = async () => { const ws = await api('GET', `/api/locations/${$('#tl', b).value}/workers`); $('#tu', b).innerHTML = ws.map(w => `<option value="${w.id}" ${w.id === x.user_id ? 'selected' : ''}>${esc(w.name)}</option>`).join(''); };
+  const sync = () => { $$('#tt button', b).forEach(bb => bb.classList.toggle('on', bb.dataset.k === target)); $('#tsl', b).style.display = target === 'slot' ? '' : 'none'; $('#tul', b).style.display = target === 'user' ? '' : 'none'; };
+  $$('#tt button', b).forEach(bb => bb.onclick = () => { target = bb.dataset.k; sync(); });
+  $('#tl', b).onchange = loadWorkers; loadWorkers(); sync();
+  $('#tok', b).onclick = async () => {
+    const body = { location_id: Number($('#tl', b).value), date: $('#td', b).value, target, slot: $('#ts', b).value, user_id: Number($('#tu', b).value), text: $('#tx', b).value, due: $('#tdue', b).value || null };
+    try { if (task) await api('PUT', `/api/tasks/${task.id}`, body); else await api('POST', '/api/tasks', body); closeModal(); toast(t('saved')); done && done(); }
+    catch (e) { $('#terr', b).innerHTML = errBox(e); }
+  };
+}
+const TF = { loc: null, from: null, to: null, user: '', status: '' };
+async function pageTasks(el) {
+  if (TF.loc === null) TF.loc = String(S.loc);
+  if (!TF.from) { TF.from = addDays(today(), -7); TF.to = addDays(today(), 14); }
+  const qs = `loc=${TF.loc}&from=${TF.from}&to=${TF.to}${TF.user ? '&user=' + TF.user : ''}${TF.status && TF.status !== 'overdue' ? '&status=' + TF.status : ''}${TF.status === 'overdue' ? '&overdue=1' : ''}`;
+  const list = await api('GET', `/api/tasks?${qs}`);
+  const users = await api('GET', '/api/users');
+  el.innerHTML = `<div class="row"><h1 class="grow">${t('nav_tasks')}</h1><button class="pri" id="tnew">+ ${t('tk_new')}</button></div>
+    <div class="card"><div class="row">
+      <select id="fl"><option value="all">${t('all_locations')}</option>${S.me.locations.map(l => `<option value="${l.id}" ${String(l.id) === TF.loc ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select>
+      <input type="date" id="ff" value="${TF.from}"> – <input type="date" id="ft" value="${TF.to}">
+      <select id="fu"><option value="">${t('all_workers')}</option>${users.filter(u => u.active).map(u => `<option value="${u.id}" ${String(u.id) === TF.user ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select>
+      <select id="fs"><option value="">${t('tk_all_status')}</option>${['pending', 'done', 'failed', 'overdue'].map(s => `<option value="${s}" ${TF.status === s ? 'selected' : ''}>${t('tk_' + s)}</option>`).join('')}</select>
+    </div></div>
+    <div class="card list">${list.map(x => `<div class="item"><div class="grow">
+        <div class="row">${x.overdue ? '<span class="excl" title="' + t('tk_overdue') + '">!</span>' : ''}<b class="grow ${x.overdue ? 'red' : ''}">${esc(x.text)}</b>${tkStatus(x)}</div>
+        <div class="small">${ddmm(x.date)} ${t('dow_' + dow(x.date))} · ${esc(x.location)} · ${esc(x.target_label)}${x.recipients.length && x.target !== 'user' ? ' → ' + x.recipients.map(r => esc(r.name)).join(', ') : ''}${x.due ? ' · ' + t('tk_until', { t: x.due }) : ''}</div>
+        ${x.status !== 'pending' ? `<div class="small">${x.status === 'done' ? '✓' : '✕'} ${esc(x.done_name)}, ${lts(x.done_at)}${x.result_comment ? ' — 💬 ' + esc(x.result_comment) : ''}</div>` : ''}
+        ${x.overdue ? `<div class="small red">! ${t('tk_overdue')}</div>` : ''}
+        <div class="small mute">${t('tk_created')}: ${esc(x.created_name)}, ${lts(x.created_at)}${x.updated_by ? ` · ${t('tk_edited')}: ${esc(x.updated_name)}, ${lts(x.updated_at)}` : ''}</div></div>
+      ${x.status === 'pending' ? `<div class="row" style="flex-direction:column;gap:4px"><button class="sm" data-edit="${x.id}">✎</button><button class="sm danger" data-del="${x.id}">✕</button></div>` : ''}</div>`).join('') || `<p class="mute">${t('no_data')}</p>`}</div>`;
+  const reload = () => pageTasks(el);
+  $('#tnew', el).onclick = () => taskModal(null, reload);
+  $('#fl', el).onchange = e => { TF.loc = e.target.value; reload(); };
+  $('#ff', el).onchange = e => { TF.from = e.target.value; reload(); };
+  $('#ft', el).onchange = e => { TF.to = e.target.value; reload(); };
+  $('#fu', el).onchange = e => { TF.user = e.target.value; reload(); };
+  $('#fs', el).onchange = e => { TF.status = e.target.value; reload(); };
+  $$('[data-edit]', el).forEach(btn => btn.onclick = () => { const x = list.find(y => y.id === Number(btn.dataset.edit)); taskModal({ ...x }, reload); });
+  $$('[data-del]', el).forEach(btn => btn.onclick = async () => { if (!confirm(t('delete_q'))) return; try { await api('DELETE', `/api/tasks/${btn.dataset.del}`); reload(); } catch (e) { toast(e.message); } });
 }
 
 window.closeModal = closeModal;
