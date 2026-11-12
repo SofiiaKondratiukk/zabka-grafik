@@ -486,7 +486,7 @@ async function pageWorkers(el) {
     const isNew = !u; u = u || { active: 1, locations: [S.loc], rate: 31.4, training_rate: 20 };
     const b = modal(`<h2>${isNew ? t('add_worker') : esc(u.name)}</h2>
       <label class="f"><span>${t('name')}</span><input id="un" value="${esc(u.name || '')}"></label>
-      ${isNew ? `<label class="f"><span>${t('login')}</span><input id="ul" autocapitalize="none"></label>` : ''}
+      <label class="f"><span>${t('login')}</span><input id="ul" autocapitalize="none" autocomplete="off" value="${esc(u.login || '')}">${isNew ? '' : `<span class="small mute">${t('login_change_help')}</span>`}</label>
       <label class="f"><span>${isNew ? t('password') : t('new_password_opt')}</span><input id="up" type="text" autocomplete="new-password"></label>
       <div class="f"><span class="mute small">${t('c_locations')}</span><br>${adminLocs.map(l => `<label style="margin-right:12px"><input type="checkbox" class="ulc" value="${l.id}" ${u.locations.includes(l.id) ? 'checked' : ''}> ${esc(l.name)}</label>`).join('')}</div>
       ${rates ? `<div class="row"><label class="f grow"><span>${t('c_rate')} (zł/${t('h')})</span><input id="ur" type="number" step="0.1" value="${u.rate ?? ''}"></label><label class="f grow"><span>${t('c_trate')} (zł/${t('h')})</span><input id="utr" type="number" step="0.1" value="${u.training_rate ?? ''}"></label></div>` : ''}
@@ -498,7 +498,8 @@ async function pageWorkers(el) {
       if (rates) { body.rate = Number($('#ur', b).value); body.training_rate = Number($('#utr', b).value); }
       if ($('#urole', b)) body.role = $('#urole', b).checked ? 'admin' : 'user';
       if ($('#ua', b)) body.active = $('#ua', b).checked;
-      try { if (isNew) { body.login = $('#ul', b).value; await api('POST', '/api/users', body); } else await api('PUT', `/api/users/${u.id}`, body); closeModal(); toast(t('saved')); await loadWorkers(); pageWorkers(el); }
+      body.login = $('#ul', b).value;
+      try { if (isNew) { await api('POST', '/api/users', body); } else await api('PUT', `/api/users/${u.id}`, body); closeModal(); toast(t('saved')); await loadWorkers(); pageWorkers(el); }
       catch (e) { $('#uerr', b).innerHTML = errBox(e); }
     };
   };

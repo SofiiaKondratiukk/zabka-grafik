@@ -131,6 +131,7 @@ app.post('/api/users', wrap(req => {
   if (!L.adminLocIds(req.user).length) forbid();
   const b = req.body;
   if (!b.login || !b.name || !b.password) bad(req.t('err_required'));
+  if (!/^[A-Za-z0-9._-]{2,32}$/.test(String(b.login).trim())) bad(req.t('err_login_format'));
   if (get('SELECT 1 FROM users WHERE lower(login)=lower(?)', b.login)) bad(req.t('err_login_taken'));
   const rates = L.canRates(req.user);
   const r = run('INSERT INTO users(login,pass,name,rate,training_rate,lang) VALUES(?,?,?,?,?,?)', b.login.trim(), hash(String(b.password)), b.name.trim(),
@@ -153,6 +154,14 @@ app.put('/api/users/:id', wrap(req => {
   }
   const b = req.body; const changes = {};
   if (b.name && b.name !== u.name) { run('UPDATE users SET name=? WHERE id=?', b.name, uid); changes.name = [u.name, b.name]; }
+  // зміна логіна — тільки адміністратор
+  if (owner && b.login != null && String(b.login).trim() !== u.login) {
+    const login = String(b.login).trim();
+    if (!/^[A-Za-z0-9._-]{2,32}$/.test(login)) bad(req.t('err_login_format'));
+    if (get('SELECT 1 FROM users WHERE lower(login)=lower(?) AND id<>?', login, uid)) bad(req.t('err_login_taken'));
+    run('UPDATE users SET login=? WHERE id=?', login, uid); changes.login = [u.login, login];
+    if (uid !== req.user.id) notify(uid, tr(u.lang || 'uk', 'n_login_changed', { login, name: req.user.name }), 'shift');
+  }
   if (b.active != null && !!b.active !== !!u.active) { run('UPDATE users SET active=? WHERE id=?', b.active ? 1 : 0, uid); changes.active = [u.active, b.active ? 1 : 0]; if (!b.active) run('DELETE FROM sessions WHERE user_id=?', uid); }
   if (L.canRates(req.user)) {
     if (b.rate != null && Number(b.rate) !== u.rate) { run('UPDATE users SET rate=? WHERE id=?', Number(b.rate), uid); changes.rate = [u.rate, Number(b.rate)]; }
