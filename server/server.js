@@ -23,6 +23,11 @@ const wrap = fn => (req, res) => { try { const r = fn(req, res); if (r !== undef
 const cookie = (req, name) => { const m = new RegExp('(?:^|; )' + name + '=([^;]*)').exec(req.headers.cookie || ''); return m ? decodeURIComponent(m[1]) : null; };
 const safeUser = u => u && ({ id: u.id, login: u.login, name: u.name, role: u.role, rate: u.rate, training_rate: u.training_rate, active: u.active, can_rates: u.can_rates, lang: u.lang, tg_linked: !!u.tg_chat_id, notify: JSON.parse(u.notify || '{}') });
 const num = v => (v === '' || v == null) ? null : Number(v);
+// логін: будь-які літери (укр., пол., лат.), цифри, пробіл, . _ -; порівняння без урахування регістру й зайвих пробілів
+const normLogin = s => String(s || '').trim().replace(/\s+/g, ' ');
+const loginKey = s => normLogin(s).toLocaleLowerCase('uk');
+const LOGIN_RE = /^[\p{L}\p{N}._\- ]{2,32}$/u;
+const findByLogin = (login, exceptId) => all('SELECT * FROM users').find(u => u.id !== exceptId && loginKey(u.login) === loginKey(login));
 
 function auth(req, res, next) {
   const token = cookie(req, 'sid') || (req.headers.authorization || '').replace(/^Bearer /, '');
@@ -45,7 +50,7 @@ const shiftLabel = (s, t) => `${s.date} ${t('slot_' + s.slot)}${L.TIMED.includes
 // ---------- auth ----------
 app.post('/api/login', wrap((req, res) => {
   const { login, password } = req.body || {};
-  const u = get('SELECT * FROM users WHERE lower(login)=lower(?) AND active=1', String(login || '').trim());
+  const found = findByLogin(login); const u = found && found.active ? found : null;
   if (!u || !checkPw(String(password || ''), u.pass)) throw new HttpError(401, 'bad_login');
   const token = crypto.randomBytes(24).toString('hex');
   run('INSERT INTO sessions(token,user_id) VALUES(?,?)', token, u.id);
@@ -131,8 +136,9 @@ app.post('/api/users', wrap(req => {
   if (!L.adminLocIds(req.user).length) forbid();
   const b = req.body;
   if (!b.login || !b.name || !b.password) bad(req.t('err_required'));
-  if (!/^[A-Za-z0-9._-]{2,32}$/.test(String(b.login).trim())) bad(req.t('err_login_format'));
-  if (get('SELECT 1 FROM users WHERE lower(login)=lower(?)', b.login)) bad(req.t('err_login_taken'));
+  b.login = normLogin(b.login);
+  if (!LOGIN_RE.test(b.login)) bad(req.t('err_login_format'));
+  if (findByLogin(b.login)) bad(req.t('err_login_taken'));
   const rates = L.canRates(req.user);
   const r = run('INSERT INTO users(login,pass,name,rate,training_rate,lang) VALUES(?,?,?,?,?,?)', b.login.trim(), hash(String(b.password)), b.name.trim(),
     rates && b.rate != null ? Number(b.rate) : Number(setting('base_rate') || 31.4), rates && b.training_rate != null ? Number(b.training_rate) : Number(setting('training_rate') || 20), b.lang === 'pl' ? 'pl' : 'uk');
@@ -155,10 +161,10 @@ app.put('/api/users/:id', wrap(req => {
   const b = req.body; const changes = {};
   if (b.name && b.name !== u.name) { run('UPDATE users SET name=? WHERE id=?', b.name, uid); changes.name = [u.name, b.name]; }
   // зміна логіна — тільки адміністратор
-  if (owner && b.login != null && String(b.login).trim() !== u.login) {
-    const login = String(b.login).trim();
-    if (!/^[A-Za-z0-9._-]{2,32}$/.test(login)) bad(req.t('err_login_format'));
-    if (get('SELECT 1 FROM users WHERE lower(login)=lower(?) AND id<>?', login, uid)) bad(req.t('err_login_taken'));
+  if (owner && b.login != null && normLogin(b.login) !== u.login) {
+    const login = normLogin(b.login);
+    if (!LOGIN_RE.test(login)) bad(req.t('err_login_format'));
+    if (findByLogin(login, uid)) bad(req.t('err_login_taken'));
     run('UPDATE users SET login=? WHERE id=?', login, uid); changes.login = [u.login, login];
     if (uid !== req.user.id) notify(uid, tr(u.lang || 'uk', 'n_login_changed', { login, name: req.user.name }), 'shift');
   }
