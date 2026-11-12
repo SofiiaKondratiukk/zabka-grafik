@@ -191,7 +191,7 @@ async function pageSchedule(el) {
           ${sl === 'dl' && d.delivery ? `<span class="small">📦 ${pal(d.delivery.pallets)} ${t('pallets_short')} (${esc(d.delivery.name)})</span>` : ''}
           ${v.status === 'published' && c && c.id && !d.closed && sl !== 'dl' ? `<div class="acts"><button class="sm" data-fix="${c.id}">✎ ${t('fact')}</button></div>` : ''}
           ${v.status === 'published' && sl === 'dl' && !d.closed && (c || d.delivery) && d.date <= today() ? `<div class="acts"><button class="sm" data-pal="${d.date}">📦 ${t('pallets_short')}</button></div>` : ''}
-          ${w ? `<span class="small red">${esc(w.text)}</span>` : ''}
+          ${w ? `<span class="small red">${esc(w.text)}</span>` : ''}<span class="small red dup-msg"></span>
         </div></td>`;
       } else {
         const mine = c && c.user_id === S.me.user.id;
@@ -216,8 +216,12 @@ async function pageSchedule(el) {
     if (c.dataset.slot === 's1' && en) en.onchange = () => { const o = other('s2'); if (o) { $('.st', o).value = en.value; $('.times', o).style.display = ''; } };
     if (c.dataset.slot === 's2' && st) st.onchange = () => { const o = other('s1'); if (o) { $('.en', o).value = st.value; $('.times', o).style.display = ''; } };
   });
+  const dupCheck = () => markDayDuplicates($$('.cell[data-slot]', el).map(c => ({ el: c, date: c.dataset.date, slot: c.dataset.slot, loc: curLoc().name, user_id: Number($('.who', c).value) || null })), v.elsewhere || {});
+  $$('.cell[data-slot]', el).forEach(c => c.addEventListener('change', dupCheck));
+  dupCheck();
   const collect = () => $$('.cell', el).map(c => ({ date: c.dataset.date, slot: c.dataset.slot, user_id: $('.who', c).value || null, start: $('.st', c) ? $('.st', c).value : null, end: $('.en', c) ? $('.en', c).value : null }));
   const save = async publish => {
+    if ($$('.dup-bad', el).length && !confirm(t('dup_confirm'))) return;
     const warns = v.avail ? availWarnings(v.avail, collect()) : [];
     if (warns.length && !confirm(t('av_warn_confirm') + '\n\n' + warns.join('\n'))) return;
     try { await api('PUT', `/api/schedule/${S.loc}`, { week: schWeek, cells: collect(), publish }); toast(publish ? t('published_ok') : t('saved')); pageSchedule(el); }
@@ -236,7 +240,7 @@ async function pageSchedule(el) {
         if (sl !== 'dl') { const [ds, de] = DEF(date, sl); const s0 = src && src.plan_start != null ? src.plan_start : ds, e0 = src && src.plan_end != null ? src.plan_end : de; $('.st', c).value = hm(s0); $('.en', c).value = hm(e0); $('.times', c).style.display = (s0 !== ds || e0 !== de) ? '' : 'none'; }
       }
     });
-    toast(t('copied_check'));
+    dupCheck(); toast(t('copied_check'));
   };
   $$('[data-fix]', el).forEach(b => b.onclick = () => fixShiftModal(v, Number(b.dataset.fix), () => pageSchedule(el)));
   $$('[data-pal]', el).forEach(b => b.onclick = () => palletModal(b.dataset.pal, v, () => pageSchedule(el)));
@@ -1058,22 +1062,7 @@ async function pageScheduleAll(el, keepMsg) {
   const cellsOf = locId => $$(`.sa-cell[data-loc="${locId}"]`, el);
   const val = c => ({ date: c.dataset.date, slot: c.dataset.slot, user_id: $('.who', c).value || null, start: $('.st', c) ? $('.st', c).value : null, end: $('.en', c) ? $('.en', c).value : null });
   // одна людина не може бути одночасно на двох змінах / локаціях — підсвічуємо одразу
-  const markConflicts = () => {
-    const all = $$('.sa-cell', el).map(c => ({ c, loc: Number(c.dataset.loc), ...val(c) })).filter(x => x.user_id && x.slot !== 'dl');
-    $$('.sa-cell', el).forEach(c => { c.classList.remove('sa-bad'); $('.sa-conf', c).textContent = ''; });
-    for (const a of all) {
-      const [ds, de] = DEF(a.date, a.slot); const as = parseHM(a.start) ?? ds, ae = parseHM(a.end) ?? de;
-      for (const b of all) {
-        if (a === b || a.date !== b.date || a.user_id !== b.user_id) continue;
-        const [bs0, be0] = DEF(b.date, b.slot); const bs = parseHM(b.start) ?? bs0, be = parseHM(b.end) ?? be0;
-        if (as < be && bs < ae) {
-          a.c.classList.add('sa-bad');
-          const ln = (locs.find(l => l.id === b.loc) || {}).name;
-          $('.sa-conf', a.c).textContent = `⚠ ${t('sa_conflict', { name: nameOf(a.user_id), loc: ln, slot: slotName(b.slot), time: hm(bs) + '–' + hm(be) })}`;
-        }
-      }
-    }
-  };
+  const markConflicts = () => markDayDuplicates($$('.sa-cell', el).map(c => ({ el: c, date: c.dataset.date, slot: c.dataset.slot, loc: (locs.find(l => l.id === Number(c.dataset.loc)) || {}).name, user_id: Number($('.who', c).value) || null })), {}, '.sa-conf');
   $$('.sa-cell', el).forEach(c => {
     const tb = $('.tbtn', c); if (tb) tb.onclick = () => { const x = $('.times', c); x.style.display = x.style.display === 'none' ? '' : 'none'; };
     const other = slot => $(`.sa-cell[data-loc="${c.dataset.loc}"][data-date="${c.dataset.date}"][data-slot="${slot}"]`, el);
@@ -1101,7 +1090,7 @@ async function pageScheduleAll(el, keepMsg) {
     markConflicts(); toast(t('copied_check'));
   };
   const saveAll = async publish => {
-    if ($$('.sa-bad', el).length && !confirm(t('sa_conflict_confirm'))) return;
+    if ($$('.dup-bad', el).length && !confirm(t('dup_confirm'))) return;
     const warns = [];
     for (const d of data) if (d.v.avail) { S.workers = d.workers; warns.push(...availWarnings(d.v.avail, cellsOf(d.loc.id).map(val)).map(w => `${d.loc.name}: ${w.replace(/^• /, '')}`)); }
     if (warns.length && !confirm(t('av_warn_confirm') + '\n\n' + warns.map(w => '• ' + w).join('\n'))) return;
@@ -1116,6 +1105,40 @@ async function pageScheduleAll(el, keepMsg) {
   };
   $('#sasave', el).onclick = () => saveAll(false);
   if ($('#sapub', el)) $('#sapub', el).onclick = () => { if (confirm(t('publish_q'))) saveAll(true); };
+}
+
+// ---------------- ОДНА ЛЮДИНА — ОДИН ЗАПИС НА ДЕНЬ (підсвітка) ----------------
+/**
+ * entries: [{el, date, slot, loc, user_id}] — клітинки на екрані; elsewhere: {date: [{user_id, loc, slot}]} — інші локації з сервера.
+ * Якщо людина того самого дня записана ще кудись (будь-яка зміна, доставка, докладка, будь-яка локація) — клітинка червона з підписом,
+ * а в списках вибору цього дня така людина позначена 🔴.
+ */
+function markDayDuplicates(entries, elsewhere, msgSel = '.dup-msg') {
+  const where = x => `${x.loc} · ${slotName(x.slot)}`;
+  const byDay = {};
+  for (const e of entries) if (e.user_id) (byDay[e.date + ':' + e.user_id] = byDay[e.date + ':' + e.user_id] || []).push(e);
+  for (const [date, list] of Object.entries(elsewhere)) for (const x of list) (byDay[date + ':' + x.user_id] = byDay[date + ':' + x.user_id] || []).push({ ...x, date });
+  for (const e of entries) {
+    e.el.classList.remove('dup-bad', 'sa-bad');
+    const m = $(msgSel, e.el); if (m) m.textContent = '';
+    if (!e.user_id) continue;
+    const others = byDay[e.date + ':' + e.user_id].filter(x => x !== e);
+    if (!others.length) continue;
+    e.el.classList.add('dup-bad');
+    if (m) m.textContent = '⚠ ' + t('dup_already', { where: others.map(where).join(', ') });
+  }
+  // позначки у списках вибору
+  for (const e of entries) {
+    const sel = $('select.who', e.el); if (!sel) continue;
+    for (const o of sel.options) {
+      if (!o.value) continue;
+      if (o.dataset.base == null) o.dataset.base = o.textContent;
+      const others = (byDay[e.date + ':' + o.value] || []).filter(x => x !== e && x.el !== e.el);
+      const nm = o.dataset.base.replace(/^(✅|🟡|⛔|▫️) /u, '');
+      // вибрана людина — коротко «🔴 Ім'я» (пояснення під клітинкою), інші в списку — з підказкою, де вже записані
+      o.textContent = !others.length ? o.dataset.base : (o.value === sel.value ? `🔴 ${nm}` : `🔴 ${nm} — ${t('dup_already', { where: others.map(where).join(', ') })}`);
+    }
+  }
 }
 
 window.closeModal = closeModal;

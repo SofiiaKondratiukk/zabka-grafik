@@ -140,3 +140,7 @@ table.schall td,table.schall th{padding:5px 5px}
 table.schall .cell select{font-size:13.5px;padding:6px 4px}
 .sa-cell.sa-bad select{border-color:var(--red);background:var(--redbg)}
 @media (max-width:760px){table.schall .sa-first{border-left:0!important;border-top:2px solid var(--acc)!important;margin-top:6px}}
+
+/* одна людина — один запис на день */
+.cell.dup-bad select.who{border:2px solid var(--red);background:var(--redbg)}
+.cell .dup-msg:empty,.cell .sa-conf:empty{display:none}

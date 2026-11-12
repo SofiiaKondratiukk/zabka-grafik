@@ -202,15 +202,18 @@ function weekView(locId, week, user) {
   }
   if (!admin && w.status !== 'published') return { week, status: 'hidden', location: loc, days: days.map(d => ({ ...d, cells: {}, delivery: null })) };
   const warn = admin ? L.warnings([locId], week, end, tFor(user.id)) : [];
-  let availMap;
+  let availMap, elsewhere;
   if (admin) { // диспозиція для вибору працівника на зміну
     availMap = {};
     const ids = all('SELECT user_id FROM user_locations WHERE location_id=?', locId).map(r => r.user_id);
     for (const e of require('./avail').weekEntries(ids, week)) (availMap[e.user_id] = availMap[e.user_id] || {})[e.date] = e;
     const vac = require('./vacations').approvedDays(ids, week, end); // підтверджений урлоп = не може
+    elsewhere = {}; // хто цього тижня вже стоїть на інших локаціях (для червоної підсвітки)
+    for (const s of all("SELECT s.*, l.name loc_name FROM shifts s JOIN locations l ON l.id=s.location_id WHERE s.location_id<>? AND s.date BETWEEN ? AND ? AND s.user_id IS NOT NULL AND s.cancelled=0", locId, week, end))
+      (elsewhere[s.date] = elsewhere[s.date] || []).push({ user_id: s.user_id, loc: s.loc_name, slot: s.slot, start: s.start, end: s.end });
     for (const uid of Object.keys(vac)) for (const d of vac[uid]) (availMap[uid] = availMap[uid] || {})[d] = { user_id: Number(uid), date: d, kind: 'vac' };
   }
-  return { week, status: w.status, published_at: w.published_at, location: loc, days, warnings: warn, is_admin: admin, avail: availMap };
+  return { week, status: w.status, published_at: w.published_at, location: loc, days, warnings: warn, is_admin: admin, avail: availMap, elsewhere };
 }
 app.get('/api/schedule/:loc', wrap(req => {
   const locId = Number(req.params.loc); needMember(req, locId);
