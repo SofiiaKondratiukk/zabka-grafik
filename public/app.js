@@ -79,14 +79,14 @@ function renderPick() {
 async function logout() { await api('POST', '/api/logout'); S.me = null; sessionStorage.clear(); renderLogin(); }
 
 const PAGES = {
-  home: { fn: pageHome }, schedule: { fn: pageSchedule }, avail: { fn: pageMyAvail }, vacation: { fn: pageVacation }, disposition: { fn: pageDisposition, admin: true }, tasks: { fn: pageTasks, admin: true }, hours: { fn: pageHours }, requests: { fn: pageRequests }, notes: { fn: pageNotes },
+  home: { fn: pageHome }, schedule: { fn: pageSchedule }, scheduleall: { fn: pageScheduleAll, admin: true }, avail: { fn: pageMyAvail }, vacation: { fn: pageVacation }, disposition: { fn: pageDisposition, admin: true }, tasks: { fn: pageTasks, admin: true }, hours: { fn: pageHours }, requests: { fn: pageRequests }, notes: { fn: pageNotes },
   warnings: { fn: pageWarnings, admin: true }, shiftcards: { fn: pageShiftCards, admin: true }, reports: { fn: pageReports, admin: true }, workers: { fn: pageWorkers, admin: true },
   locations: { fn: pageLocations, owner: true }, months: { fn: pageMonths, admin: true }, audit: { fn: pageAudit, admin: true },
   settings: { fn: pageSettings }, notifications: { fn: pageNotifications },
 };
 function navHtml(page) {
   const items = [['home', t('nav_home')], ['schedule', t('nav_schedule')], ['avail', t('nav_avail')], ['vacation', t('nav_vacation')], ['hours', t('nav_hours')], ['requests', t('nav_requests')], ['notes', t('nav_notes')]];
-  if (isAdmin()) items.push(['tasks', t('nav_tasks')], ['disposition', t('nav_disposition')], ['shiftcards', t('nav_shiftcards')], ['warnings', t('nav_warnings')], ['reports', t('nav_reports')], ['workers', t('nav_workers')], ['months', t('nav_months')], ['audit', t('nav_audit')]);
+  if (isAdmin()) items.push(['scheduleall', t('nav_schedule_all')], ['tasks', t('nav_tasks')], ['disposition', t('nav_disposition')], ['shiftcards', t('nav_shiftcards')], ['warnings', t('nav_warnings')], ['reports', t('nav_reports')], ['workers', t('nav_workers')], ['months', t('nav_months')], ['audit', t('nav_audit')]);
   if (isOwner()) items.push(['locations', t('nav_locations')]);
   items.push(['settings', t('nav_settings')]);
   return items.map(([k, l]) => `<a href="#/${k}" class="${k === page ? 'on' : ''}">${l}</a>`).join('');
@@ -168,7 +168,7 @@ async function pageSchedule(el) {
   let html = `<div class="row" style="justify-content:space-between"><h1>${t('nav_schedule')}: ${ddmm(schWeek)} – ${ddmm(end)}.${end.slice(0, 4)}</h1>
     <div class="row"><button id="wprev">‹</button><button id="wnow">${t('this_week')}</button><button id="wnext">›</button></div></div>
     <div class="row" style="margin-bottom:10px">${v.status === 'published' ? `<span class="pill pub">${t('published')}</span>` : v.status === 'hidden' ? `<span class="pill draft">${t('not_published_yet')}</span>` : `<span class="pill draft">${t('draft')}</span>`}
-    ${admin ? `<span class="small mute">${t('sched_rules_info')}</span>` : ''}</div>`;
+    ${admin ? `<span class="small mute">${t('sched_rules_info')}</span><span class="grow"></span><a class="pri" href="#/scheduleall" onclick="saWeek='${schWeek}'" style="text-decoration:none;padding:8px 14px;border-radius:8px;background:var(--acc);color:#fff">🗂 ${t('sched_all_btn')}</a>` : ''}</div>`;
   if (v.status === 'hidden') { el.innerHTML = html + `<div class="card mute">${t('schedule_hidden')}</div>`; bindWeekNav(el); return; }
   const editable = admin;
   html += `<div id="sch-err"></div><div class="tbl-wrap"><table class="t sch"><thead><tr><th>${t('day')}</th>${slots.map(s => `<th>${slotName(s)}<div class="small mute" style="font-weight:400">${s === 'dl' ? t('dl_days') : s === 'rs' ? '18:00–23:00' : s === 's1' ? '06:00/08:00–14:30' : '14:30–23:00'}</div></th>`).join('')}</tr></thead><tbody>`;
@@ -999,6 +999,122 @@ async function pageVacation(el) {
   $$('[data-cancel]', el).forEach(b => b.onclick = async () => { if (!confirm(t('vac_cancel_q'))) return; try { await api('POST', `/api/vacations/${b.dataset.cancel}/cancel`); reload(); } catch (e) { toast(e.message); } });
   if ($('#vmaxs', el)) $('#vmaxs', el).onclick = async () => { try { await api('PUT', '/api/vacations/settings', { max: Number($('#vmax', el).value) }); toast(t('saved')); reload(); } catch (e) { toast(e.message); } };
   if (VS.from && VS.to) check();
+}
+
+// ---------------- ГРАФІК: УСІ ЛОКАЦІЇ ОДНОЧАСНО (адміністратор) ----------------
+let saWeek = null;
+function saOptions(workers, avail, date, slot, s, en, selected) {
+  if (slot === 'dl' || !avail) return workers.map(u => `<option value="${u.id}" ${u.id === selected ? 'selected' : ''}>${esc(u.name)}</option>`).join('');
+  const groups = { full: [], partial: [], none: [], no: [] };
+  for (const u of workers) { const e = (avail[u.id] || {})[date]; groups[avCoverage(e, date, s, en)].push({ u, e }); }
+  const opt = ({ u, e }, g) => `<option value="${u.id}" ${u.id === selected ? 'selected' : ''}>${g === 'full' ? '✅ ' : g === 'partial' ? '🟡 ' : g === 'no' ? '⛔ ' : '▫️ '}${esc(u.name)}${g === 'partial' || g === 'no' ? ' — ' + esc(avDesc(e)) : ''}</option>`;
+  return ['full', 'partial', 'none', 'no'].filter(g => groups[g].length).map(g => `<optgroup label="${t('av_g_' + g)}">${groups[g].map(x => opt(x, g)).join('')}</optgroup>`).join('');
+}
+async function pageScheduleAll(el, keepMsg) {
+  el.style.maxWidth = 'none'; // усі три локації на всю ширину екрана
+  saWeek = saWeek || weekStart(today());
+  const end = addDays(saWeek, 6);
+  const locs = S.me.locations;
+  const data = await Promise.all(locs.map(async l => {
+    const [v, workers] = await Promise.all([api('GET', `/api/schedule/${l.id}?week=${saWeek}`), api('GET', `/api/locations/${l.id}/workers`)]);
+    return { loc: v.location, v, workers, slots: ['s1', 's2', 'dl'].concat(v.location.has_restock ? ['rs'] : []) };
+  }));
+  const nameOf = id => { for (const d of data) { const w = d.workers.find(x => x.id === Number(id)); if (w) return w.name; } return '?'; };
+  let head1 = `<th rowspan="2">${t('day')}</th>`, head2 = '';
+  for (const d of data) {
+    head1 += `<th colspan="${d.slots.length}" class="sa-loc">${esc(d.loc.name)} ${d.v.status === 'published' ? `<span class="pill pub">${t('published')}</span>` : `<span class="pill draft">${t('draft')}</span>`}</th>`;
+    head2 += d.slots.map((sl, i) => `<th class="${i === 0 ? 'sa-first' : ''}">${slotName(sl)}</th>`).join('');
+  }
+  let rows = '';
+  for (let i = 0; i < 7; i++) {
+    const date = addDays(saWeek, i); const dw = dow(date);
+    rows += `<tr class="${dw === 6 ? 'sun' : ''} ${date === today() ? 'today' : ''}"><td class="day" data-l="">${t('dow_full_' + dw)} <span class="d">${ddmm(date)}</span></td>`;
+    for (const d of data) {
+      const day = d.v.days[i];
+      d.slots.forEach((sl, si) => {
+        const c = day.cells[sl]; const [ds, de] = DEF(date, sl);
+        const st = c ? c.start : ds, en = c ? c.end : de;
+        const custom = c && sl !== 'dl' && (c.start !== ds || c.end !== de);
+        const empty = d.v.status === 'published' && sl !== 'dl' && date >= today() && !(c && c.user_id);
+        rows += `<td data-l="${esc(d.loc.name)} · ${slotName(sl)}" class="${si === 0 ? 'sa-first' : ''} ${sl === 'dl' && day.delivery_day ? 'dl-day' : ''}">
+          <div class="cell sa-cell" data-loc="${d.loc.id}" data-date="${date}" data-slot="${sl}">
+            <div class="row" style="gap:4px;flex-wrap:nowrap">${empty ? `<span class="excl" title="${t('warn_empty', { slot: slotName(sl) })}">!</span>` : ''}<select class="who" ${day.closed ? 'disabled' : ''}><option value="">—</option>${saOptions(d.workers, d.v.avail, date, sl, st, en, c && c.user_id)}${c && c.user_id && !d.workers.some(u => u.id === c.user_id) ? `<option value="${c.user_id}" selected>${esc(c.name)}</option>` : ''}</select>
+            ${sl !== 'dl' ? `<button class="sm tbtn" type="button" title="${t('custom_time')}">⏱</button>` : ''}</div>
+            ${sl !== 'dl' ? `<div class="times" style="${custom ? '' : 'display:none'}"><input type="time" class="st" value="${hm(st)}" ${day.closed ? 'disabled' : ''}>–<input type="time" class="en" value="${hm(en)}" ${day.closed ? 'disabled' : ''}></div>` : ''}
+            ${c && c.cancelled ? `<span class="small red">✕ ${t('cancelled')}</span>` : ''}
+            <span class="small red sa-conf"></span>
+          </div></td>`;
+      });
+    }
+    rows += '</tr>';
+  }
+  el.innerHTML = `<div class="row" style="justify-content:space-between"><h1>${t('nav_schedule_all')}: ${ddmm(saWeek)} – ${ddmm(end)}.${end.slice(0, 4)}</h1>
+      <div class="row"><button id="sw1">‹</button><button id="sw0">${t('this_week')}</button><button id="sw2">›</button></div></div>
+    <p class="small mute">${t('sched_all_help')}</p><div id="sa-msg">${keepMsg || ''}</div>
+    <div class="tbl-wrap"><table class="t sch schall"><thead><tr>${head1}</tr><tr>${head2}</tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="row" style="margin-top:12px"><button id="sacopy">${t('copy_prev_week_all')}</button><span class="grow"></span>
+      <button id="sasave" class="pri">${t('save_all_locs')}</button>${data.some(d => d.v.status !== 'published') ? `<button id="sapub" class="pri">${t('publish_all_locs')}</button>` : ''}</div>`;
+  const cellsOf = locId => $$(`.sa-cell[data-loc="${locId}"]`, el);
+  const val = c => ({ date: c.dataset.date, slot: c.dataset.slot, user_id: $('.who', c).value || null, start: $('.st', c) ? $('.st', c).value : null, end: $('.en', c) ? $('.en', c).value : null });
+  // одна людина не може бути одночасно на двох змінах / локаціях — підсвічуємо одразу
+  const markConflicts = () => {
+    const all = $$('.sa-cell', el).map(c => ({ c, loc: Number(c.dataset.loc), ...val(c) })).filter(x => x.user_id && x.slot !== 'dl');
+    $$('.sa-cell', el).forEach(c => { c.classList.remove('sa-bad'); $('.sa-conf', c).textContent = ''; });
+    for (const a of all) {
+      const [ds, de] = DEF(a.date, a.slot); const as = parseHM(a.start) ?? ds, ae = parseHM(a.end) ?? de;
+      for (const b of all) {
+        if (a === b || a.date !== b.date || a.user_id !== b.user_id) continue;
+        const [bs0, be0] = DEF(b.date, b.slot); const bs = parseHM(b.start) ?? bs0, be = parseHM(b.end) ?? be0;
+        if (as < be && bs < ae) {
+          a.c.classList.add('sa-bad');
+          const ln = (locs.find(l => l.id === b.loc) || {}).name;
+          $('.sa-conf', a.c).textContent = `⚠ ${t('sa_conflict', { name: nameOf(a.user_id), loc: ln, slot: slotName(b.slot), time: hm(bs) + '–' + hm(be) })}`;
+        }
+      }
+    }
+  };
+  $$('.sa-cell', el).forEach(c => {
+    const tb = $('.tbtn', c); if (tb) tb.onclick = () => { const x = $('.times', c); x.style.display = x.style.display === 'none' ? '' : 'none'; };
+    const other = slot => $(`.sa-cell[data-loc="${c.dataset.loc}"][data-date="${c.dataset.date}"][data-slot="${slot}"]`, el);
+    const st = $('.st', c), en = $('.en', c);
+    if (c.dataset.slot === 's1' && en) en.addEventListener('change', () => { const o = other('s2'); if (o) { $('.st', o).value = en.value; $('.times', o).style.display = ''; } });
+    if (c.dataset.slot === 's2' && st) st.addEventListener('change', () => { const o = other('s1'); if (o) { $('.en', o).value = st.value; $('.times', o).style.display = ''; } });
+    c.addEventListener('change', markConflicts);
+  });
+  markConflicts();
+  const go = w => { saWeek = w; pageScheduleAll(el); };
+  $('#sw1', el).onclick = () => go(addDays(saWeek, -7)); $('#sw2', el).onclick = () => go(addDays(saWeek, 7)); $('#sw0', el).onclick = () => go(weekStart(today()));
+  $('#sacopy', el).onclick = async () => {
+    for (const d of data) {
+      const pv = await api('GET', `/api/schedule/${d.loc.id}?week=${addDays(saWeek, -7)}`);
+      pv.days.forEach((pd_, i) => {
+        const date = addDays(saWeek, i);
+        for (const sl of d.slots) {
+          const c = $(`.sa-cell[data-loc="${d.loc.id}"][data-date="${date}"][data-slot="${sl}"]`, el); if (!c || $('.who', c).disabled) continue;
+          const src = pd_.cells[sl];
+          $('.who', c).value = src && src.plan_user_id ? String(src.plan_user_id) : '';
+          if (sl !== 'dl') { const [ds, de] = DEF(date, sl); const s0 = src && src.plan_start != null ? src.plan_start : ds, e0 = src && src.plan_end != null ? src.plan_end : de; $('.st', c).value = hm(s0); $('.en', c).value = hm(e0); $('.times', c).style.display = (s0 !== ds || e0 !== de) ? '' : 'none'; }
+        }
+      });
+    }
+    markConflicts(); toast(t('copied_check'));
+  };
+  const saveAll = async publish => {
+    if ($$('.sa-bad', el).length && !confirm(t('sa_conflict_confirm'))) return;
+    const warns = [];
+    for (const d of data) if (d.v.avail) { S.workers = d.workers; warns.push(...availWarnings(d.v.avail, cellsOf(d.loc.id).map(val)).map(w => `${d.loc.name}: ${w.replace(/^• /, '')}`)); }
+    if (warns.length && !confirm(t('av_warn_confirm') + '\n\n' + warns.map(w => '• ' + w).join('\n'))) return;
+    const results = []; let allOk = true;
+    for (const d of data) {
+      try { await api('PUT', `/api/schedule/${d.loc.id}`, { week: saWeek, cells: cellsOf(d.loc.id).map(val), publish: publish && d.v.status !== 'published' }); results.push(`<div class="okbox">✓ ${esc(d.loc.name)}: ${publish && d.v.status !== 'published' ? t('published_ok') : t('saved')}</div>`); }
+      catch (e) { allOk = false; results.push(`<div><b>${esc(d.loc.name)}</b>${errBox(e)}</div>`); }
+    }
+    await loadWorkers(); // повернути список працівників поточної локації
+    if (allOk) { toast(publish ? t('published_ok') : t('saved')); pageScheduleAll(el, results.join('')); }
+    else { $('#sa-msg', el).innerHTML = results.join(''); $('#sa-msg', el).scrollIntoView({ behavior: 'smooth' }); }
+  };
+  $('#sasave', el).onclick = () => saveAll(false);
+  if ($('#sapub', el)) $('#sapub', el).onclick = () => { if (confirm(t('publish_q'))) saveAll(true); };
 }
 
 window.closeModal = closeModal;

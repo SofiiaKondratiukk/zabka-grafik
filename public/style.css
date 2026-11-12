@@ -130,3 +130,13 @@ table.avtable td.avcell:hover{outline:2px solid var(--acc);outline-offset:-2px}
 .vd-free{background:var(--vfree)}.vd-busy{background:var(--vbusy);color:var(--red)}.vd-pend{background:var(--vpend)}.vd-mine{background:var(--vmine)}.vd-past{background:transparent;color:var(--mute);opacity:.5}
 .vd-sel{border:2px solid var(--acc)!important}
 .vleg{padding:2px 8px;border-radius:6px}
+
+/* графік: усі локації */
+table.schall th.sa-loc{text-align:center;background:var(--acc);color:#fff;border-left:3px solid var(--card)}
+table.schall th.sa-loc .pill{background:var(--card);color:var(--fg)}
+table.schall .sa-first{border-left:3px solid var(--acc)!important}
+table.schall .cell{min-width:118px}
+table.schall td,table.schall th{padding:5px 5px}
+table.schall .cell select{font-size:13.5px;padding:6px 4px}
+.sa-cell.sa-bad select{border-color:var(--red);background:var(--redbg)}
+@media (max-width:760px){table.schall .sa-first{border-left:0!important;border-top:2px solid var(--acc)!important;margin-top:6px}}
