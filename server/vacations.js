@@ -1,7 +1,7 @@
 'use strict';
 /*
  * «Урлоп» — відпустки працівників з підтвердженням адміністратора. Доповнення до основної програми.
- * Правило: на одній локації в один день урлоп може мати не більше N людей (типово 1).
+ * Правило: в один день урлоп може мати не більше N людей (типово 1) з УСІХ локацій разом.
  * Дні, зайняті іншим працівником (запит очікує або підтверджено), взяти не можна — навіть надіслати запит.
  */
 const { db, all, get, run, setting } = require('./db');
@@ -36,21 +36,22 @@ function activeAt(locIds, from, to) {
  * Які дні періоду вже зайняті для цього працівника (на будь-якій з його локацій ліміт досягнуто іншими людьми).
  * Повертає [{date, location, people:[{name, range}]}].
  */
+const locNames = uid => userLocs(uid).map(id => (get('SELECT name FROM locations WHERE id=?', id) || {}).name).join(', ');
+/** Усі урлопи (очікують / підтверджені) з усіх локацій, що перетинають період. */
+const activeAll = (from, to) => all(`SELECT * FROM vacations WHERE status IN ${ACTIVE} AND start<=? AND end>=? ORDER BY start`, to, from);
 function conflicts(uid, start, end, excludeId) {
   const out = []; const max = maxPerDay();
-  for (const locId of userLocs(uid)) {
-    const others = activeAt([locId], start, end).filter(v => v.user_id !== uid && v.id !== excludeId);
-    for (const d of L.dates(start, end)) {
-      const on = others.filter(v => v.start <= d && v.end >= d);
-      if (on.length >= max) out.push({ date: d, location_id: locId, location: (get('SELECT name FROM locations WHERE id=?', locId) || {}).name, people: on.map(v => ({ name: L.userName(v.user_id), range: fmtRange(v) })) });
-    }
+  const others = activeAll(start, end).filter(v => v.user_id !== uid && v.id !== excludeId);
+  for (const d of L.dates(start, end)) {
+    const on = others.filter(v => v.start <= d && v.end >= d);
+    if (on.length >= max) out.push({ date: d, people: on.map(v => ({ name: L.userName(v.user_id), range: fmtRange(v), location: locNames(v.user_id) })) });
   }
   return out;
 }
 /** Короткий текст конфлікту: «Настя 02.02–14.02 (Nadwiślańska 11)». */
 function conflictText(list) {
   const seen = new Map();
-  for (const c of list) for (const p of c.people) seen.set(p.name + p.range + c.location, `${p.name} ${p.range} (${c.location})`);
+  for (const c of list) for (const p of c.people) seen.set(p.name + p.range, `${p.name} ${p.range} (${p.location})`);
   return [...seen.values()].join(', ');
 }
 function view(v, viewer) {
@@ -72,7 +73,7 @@ function register(app, h) {
     const now = L.warsawNow();
     const from = isDate(req.query.from) ? req.query.from : L.addDays(now.date, -31);
     const to = isDate(req.query.to) ? req.query.to : L.addDays(now.date, 400);
-    const list = activeAt([locId], from, to).map(v => view(v, req.user));
+    const list = activeAll(from, to).map(v => ({ ...view(v, req.user), location: locNames(v.user_id) })); // урлопи з усіх локацій
     const mineAll = all('SELECT * FROM vacations WHERE user_id=? AND end>=? ORDER BY start DESC LIMIT 50', req.user.id, L.addDays(now.date, -365)).map(v => view(v, req.user));
     const workers = all('SELECT u.id, u.name FROM users u JOIN user_locations ul ON ul.user_id=u.id WHERE ul.location_id=? AND u.active=1 ORDER BY u.name', locId);
     return { max: maxPerDay(), today: now.date, list, mine: mineAll, workers: L.isAdminUser(req.user) ? workers : undefined,
