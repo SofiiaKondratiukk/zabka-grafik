@@ -235,7 +235,7 @@ const reportsDef = {
       const uid = (del && del.user_id) || (sch && sch.user_id);
       if (p.userId && uid !== p.userId) continue;
       const confirmed = del && del.pallets != null;
-      const isDay = L.DELIVERY_DOW.includes(L.dow(d));
+      const isDay = L.isDeliveryDay(locId, d);
       if (!confirmed && !(isDay && d <= now.date) && !sch) continue;
       const sum = confirmed ? L.palletPay(del.pallets) : 0;
       rows.push({ date: d, dow: t('dow_' + L.dow(d)), location: locName(locId), name: L.userName(uid) || '—', pallets: confirmed ? del.pallets : null, sum: confirmed ? sum : null,

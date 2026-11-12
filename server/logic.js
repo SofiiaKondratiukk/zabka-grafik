@@ -20,7 +20,7 @@ const prevMonth = m => { const [y, mo] = m.split('-').map(Number); const d = new
 const hm = min => min == null ? '' : String(Math.floor(min / 60)).padStart(2, '0') + ':' + String(min % 60).padStart(2, '0');
 const parseHM = s => { if (s == null || s === '') return null; if (typeof s === 'number') return s; const m = /^(\d{1,2}):(\d{2})$/.exec(String(s).trim()); if (!m) return NaN; return +m[1] * 60 + +m[2]; };
 function dates(from, to) { const r = []; for (let d = from; d <= to; d = addDays(d, 1)) r.push(d); return r; }
-const DELIVERY_DOW = [0, 2, 3, 4]; // Mon, Wed, Thu, Fri
+const DELIVERY_DOW = [0, 2, 3, 4]; // лише для демо-даних; день доставки визначає адміністратор у графіку
 const TIMED = ['s1', 's2', 'rs'];
 
 function defaults(date, slot) {
@@ -51,6 +51,11 @@ function adminLocIds(user) {
   return [];
 }
 const canRates = user => isAdminUser(user);
+/** День доставки — коли в опублікованому графіку хтось вписаний у колонку «Доставки». */
+function isDeliveryDay(locId, date) {
+  const s = get("SELECT user_id FROM shifts WHERE location_id=? AND date=? AND slot='dl' AND user_id IS NOT NULL AND cancelled=0", locId, date);
+  return !!s && isPublished(locId, date);
+}
 function isClosed(locId, date) { return !!get('SELECT 1 FROM months WHERE location_id=? AND month=?', locId, monthOf(date)); }
 function isPublished(locId, date) { return (get('SELECT status FROM weeks WHERE location_id=? AND week=?', locId, weekStart(date)) || {}).status === 'published'; }
 
@@ -163,8 +168,8 @@ function warnings(locIds, from, to, t = k => k) {
     const loc = get('SELECT * FROM locations WHERE id=?', locId);
     if (!loc || !loc.active) continue;
     for (const d of dates(from, to)) {
-      // 1. delivery day without confirmed pallets
-      if (DELIVERY_DOW.includes(dow(d)) && (d < now.date || (d === now.date && now.min >= 23 * 60))) {
+      // 1. delivery day (someone is in the «Доставки» column) without confirmed pallets
+      if (isDeliveryDay(locId, d) && (d < now.date || (d === now.date && now.min >= 23 * 60))) {
         const del = get('SELECT * FROM deliveries WHERE location_id=? AND date=? AND pallets IS NOT NULL', locId, d);
         if (!del) out.push({ key: `dl:${locId}:${d}`, location_id: locId, date: d, kind: 'delivery', text: t('warn_delivery') });
       }
@@ -190,5 +195,5 @@ function audit(user, locId, action, details) {
   run('INSERT INTO audit(user_id, location_id, action, details) VALUES(?,?,?,?)', user ? user.id : null, locId || null, action, typeof details === 'string' ? details : JSON.stringify(details));
 }
 
-module.exports = { isAdminUser, warsawNow, addDays, dow, weekStart, monthOf, monthRange, prevMonth, hm, parseHM, dates, defaults, palletPay, DELIVERY_DOW, TIMED,
+module.exports = { isAdminUser, warsawNow, addDays, dow, weekStart, monthOf, monthRange, prevMonth, hm, parseHM, dates, defaults, palletPay, DELIVERY_DOW, isDeliveryDay, TIMED,
   userName, locationsFor, isAdmin, adminLocIds, canRates, isClosed, isPublished, validate, computeRecords, money, warnings, audit, shiftCredited };

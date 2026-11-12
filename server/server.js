@@ -198,7 +198,7 @@ function weekView(locId, week, user) {
     const cells = {};
     for (const s of rows.filter(r => r.date === d)) cells[s.slot] = { ...s, name: L.userName(s.user_id), plan_name: L.userName(s.plan_user_id) };
     const del = dels.find(x => x.date === d);
-    days.push({ date: d, dow: L.dow(d), cells, delivery: del ? { ...del, name: L.userName(del.user_id) } : null, delivery_day: L.DELIVERY_DOW.includes(L.dow(d)), closed: L.isClosed(locId, d) });
+    days.push({ date: d, dow: L.dow(d), cells, delivery: del ? { ...del, name: L.userName(del.user_id) } : null, delivery_day: !!(cells.dl && cells.dl.user_id), closed: L.isClosed(locId, d) });
   }
   if (!admin && w.status !== 'published') return { week, status: 'hidden', location: loc, days: days.map(d => ({ ...d, cells: {}, delivery: null })) };
   const warn = admin ? L.warnings([locId], week, end, tFor(user.id)) : [];

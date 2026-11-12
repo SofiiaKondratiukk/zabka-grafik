@@ -171,7 +171,7 @@ async function pageSchedule(el) {
     ${admin ? `<span class="small mute">${t('sched_rules_info')}</span><span class="grow"></span><a class="pri" href="#/scheduleall" onclick="saWeek='${schWeek}'" style="text-decoration:none;padding:8px 14px;border-radius:8px;background:var(--acc);color:#fff">🗂 ${t('sched_all_btn')}</a>` : ''}</div>`;
   if (v.status === 'hidden') { el.innerHTML = html + `<div class="card mute">${t('schedule_hidden')}</div>`; bindWeekNav(el); return; }
   const editable = admin;
-  html += `<div id="sch-err"></div><div class="tbl-wrap"><table class="t sch"><thead><tr><th>${t('day')}</th>${slots.map(s => `<th>${slotName(s)}<div class="small mute" style="font-weight:400">${s === 'dl' ? t('dl_days') : s === 'rs' ? '18:00–23:00' : s === 's1' ? '06:00/08:00–14:30' : '14:30–23:00'}</div></th>`).join('')}</tr></thead><tbody>`;
+  html += `<div id="sch-err"></div><div class="tbl-wrap"><table class="t sch"><thead><tr><th>${t('day')}</th>${slots.map(s => `<th>${slotName(s)}<div class="small mute" style="font-weight:400">${s === 'dl' ? t('dl_any_day') : s === 'rs' ? '18:00–23:00' : s === 's1' ? '06:00/08:00–14:30' : '14:30–23:00'}</div></th>`).join('')}</tr></thead><tbody>`;
   for (const d of v.days) {
     html += `<tr class="${d.dow === 6 ? 'sun' : ''} ${d.date === today() ? 'today' : ''}"><td class="day" data-l="">${t('dow_full_' + d.dow)} <span class="d">${ddmm(d.date)}</span>${d.closed ? ' 🔒' : ''}${admin ? ` <a href="#/shiftcards" class="small" title="${t('nav_shiftcards')}" onclick="sessionStorage.setItem('cardDate','${d.date}')">📋</a>` : ''}</td>`;
     for (const sl of slots) {
@@ -183,7 +183,7 @@ async function pageSchedule(el) {
         const st = c ? c.start : ds, en = c ? c.end : de;
         const custom = c && sl !== 'dl' && (c.start !== ds || c.end !== de);
         html += `<td data-l="${lab}" class="${sl === 'dl' && d.delivery_day ? 'dl-day' : ''}"><div class="cell ${c && c.user_id ? '' : 'empty'}" data-date="${d.date}" data-slot="${sl}">
-          <div class="row" style="gap:4px;flex-wrap:nowrap">${w ? `<span class="excl" title="${esc(w.text)}">!</span>` : ''}<select class="who" ${d.closed ? 'disabled' : ''}><option value="">—</option>${sl !== 'dl' && v.avail ? workerOptionsByAvail(v.avail, d.date, st, en, c && c.user_id) : S.workers.map(u => `<option value="${u.id}" ${c && c.user_id === u.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}${c && c.user_id && !S.workers.some(u => u.id === c.user_id) ? `<option value="${c.user_id}" selected>${esc(c.name)}</option>` : ''}</select>
+          <div class="row" style="gap:4px;flex-wrap:nowrap">${w ? `<span class="excl" title="${esc(w.text)}">!</span>` : ''}<select class="who" ${d.closed ? 'disabled' : ''}><option value="">—</option>${v.avail ? workerOptionsByAvail(v.avail, d.date, st, en, c && c.user_id) : S.workers.map(u => `<option value="${u.id}" ${c && c.user_id === u.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}${c && c.user_id && !S.workers.some(u => u.id === c.user_id) ? `<option value="${c.user_id}" selected>${esc(c.name)}</option>` : ''}</select>
           ${sl !== 'dl' ? `<button class="sm tbtn" type="button" title="${t('custom_time')}">⏱</button>` : ''}</div>
           ${sl !== 'dl' ? `<div class="times" style="${custom ? '' : 'display:none'}"><input type="time" class="st" value="${hm(st)}" ${d.closed ? 'disabled' : ''}>–<input type="time" class="en" value="${hm(en)}" ${d.closed ? 'disabled' : ''}></div>` : ''}
           ${c && c.cancelled ? `<span class="small red">✕ ${t('cancelled')}</span>` : ''}
@@ -686,6 +686,7 @@ function avCoverage(e, date, s, en) {
   if (!e) return 'none';
   const iv = avInterval(e, date);
   if (!iv) return 'no';
+  if (s == null || en == null) return e.kind === 'all' ? 'full' : 'partial'; // доставки: час не фіксований
   if (iv[0] <= s && iv[1] >= en) return 'full';
   if (iv[0] < en && iv[1] > s) return 'partial';
   return 'no';
@@ -699,14 +700,14 @@ function workerOptionsByAvail(avail, date, s, en, selected) {
 function availWarnings(avail, cells) {
   const out = [];
   for (const c of cells) {
-    if (!c.user_id || c.slot === 'dl') continue;
+    if (!c.user_id) continue;
     const [ds, de] = DEF(c.date, c.slot);
-    const s = parseHM(c.start) ?? ds, en = parseHM(c.end) ?? de;
+    const s = c.slot === 'dl' ? null : (parseHM(c.start) ?? ds), en = c.slot === 'dl' ? null : (parseHM(c.end) ?? de);
     const e = (avail[c.user_id] || {})[c.date];
     const cov = avCoverage(e, c.date, s, en);
     if (cov === 'no' || cov === 'partial') {
       const name = (S.workers.find(u => u.id === Number(c.user_id)) || {}).name || '?';
-      out.push(`• ${ddmm(c.date)} ${slotName(c.slot)} ${hm(s)}–${hm(en)}: ${name} — ${avDesc(e)}`);
+      out.push(`• ${ddmm(c.date)} ${slotName(c.slot)}${s != null ? ' ' + hm(s) + '–' + hm(en) : ''}: ${name} — ${avDesc(e)}`);
     }
   }
   return out;
@@ -1004,7 +1005,7 @@ async function pageVacation(el) {
 // ---------------- ГРАФІК: УСІ ЛОКАЦІЇ ОДНОЧАСНО (адміністратор) ----------------
 let saWeek = null;
 function saOptions(workers, avail, date, slot, s, en, selected) {
-  if (slot === 'dl' || !avail) return workers.map(u => `<option value="${u.id}" ${u.id === selected ? 'selected' : ''}>${esc(u.name)}</option>`).join('');
+  if (!avail) return workers.map(u => `<option value="${u.id}" ${u.id === selected ? 'selected' : ''}>${esc(u.name)}</option>`).join('');
   const groups = { full: [], partial: [], none: [], no: [] };
   for (const u of workers) { const e = (avail[u.id] || {})[date]; groups[avCoverage(e, date, s, en)].push({ u, e }); }
   const opt = ({ u, e }, g) => `<option value="${u.id}" ${u.id === selected ? 'selected' : ''}>${g === 'full' ? '✅ ' : g === 'partial' ? '🟡 ' : g === 'no' ? '⛔ ' : '▫️ '}${esc(u.name)}${g === 'partial' || g === 'no' ? ' — ' + esc(avDesc(e)) : ''}</option>`;
