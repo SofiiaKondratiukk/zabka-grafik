@@ -50,8 +50,10 @@ const shiftLabel = (s, t) => `${s.date} ${t('slot_' + s.slot)}${L.TIMED.includes
 // ---------- auth ----------
 app.post('/api/login', wrap((req, res) => {
   const { login, password } = req.body || {};
-  const found = findByLogin(login); const u = found && found.active ? found : null;
-  if (!u || !checkPw(String(password || ''), u.pass)) throw new HttpError(401, 'bad_login');
+  // усі активні користувачі з таким логіном (без урахування регістру); пароль перевіряється для кожного
+  const pw = String(password || '');
+  const u = all('SELECT * FROM users WHERE active=1').filter(x => loginKey(x.login) === loginKey(login)).find(x => checkPw(pw, x.pass));
+  if (!u) throw new HttpError(401, 'bad_login');
   const token = crypto.randomBytes(24).toString('hex');
   run('INSERT INTO sessions(token,user_id) VALUES(?,?)', token, u.id);
   res.setHeader('Set-Cookie', `sid=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${60 * 60 * 24 * 90}`);
@@ -663,6 +665,7 @@ module.exports = { app, hash };
 
 if (require.main === module) {
   require('./seed').ensureSeed();
+  require('./fixes').run({ hash, loginKey }); // одноразові виправлення даних
   const port = Number(process.env.PORT || 3000);
   app.listen(port, () => console.log(`Żabka Grafik: http://localhost:${port}`));
   startBot();
