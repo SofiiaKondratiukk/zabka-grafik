@@ -190,6 +190,8 @@ function weekView(locId, week, user) {
     availMap = {};
     const ids = all('SELECT user_id FROM user_locations WHERE location_id=?', locId).map(r => r.user_id);
     for (const e of require('./avail').weekEntries(ids, week)) (availMap[e.user_id] = availMap[e.user_id] || {})[e.date] = e;
+    const vac = require('./vacations').approvedDays(ids, week, end); // підтверджений урлоп = не може
+    for (const uid of Object.keys(vac)) for (const d of vac[uid]) (availMap[uid] = availMap[uid] || {})[d] = { user_id: Number(uid), date: d, kind: 'vac' };
   }
   return { week, status: w.status, published_at: w.published_at, location: loc, days, warnings: warn, is_admin: admin, avail: availMap };
 }
@@ -637,7 +639,8 @@ setInterval(remind, 15 * 60 * 1000);
 require('./money').register(app, { wrap, needAdmin, needMember, bad });
 const avail = require('./avail'); avail.register(app, { wrap, needAdmin, needMember, bad, forbid }); // диспозиція
 require('./tasks').register(app, { wrap, needAdmin, needMember, bad, forbid }); // завдання від адміністратора
-require('./telegram').register(app, { wrap, bad, forbid, L }); // Telegram-бот: webhook, токен, тест // премії, штрафи, мінуси, аванси
+require('./telegram').register(app, { wrap, bad, forbid, L }); // Telegram-бот: webhook, токен, тест
+require('./vacations').register(app, { wrap, needMember, bad, forbid }); // урлопи // премії, штрафи, мінуси, аванси
 
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, '..', 'public', 'index.html')));
 

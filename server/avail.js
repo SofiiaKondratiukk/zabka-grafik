@@ -108,8 +108,10 @@ function register(app, h) {
     const week = weekParam(req.query.week);
     const workers = all('SELECT u.id, u.name FROM users u JOIN user_locations ul ON ul.user_id=u.id WHERE ul.location_id=? AND u.active=1 ORDER BY u.name', locId);
     const rows = weekEntries(workers.map(w => w.id), week);
+    const vac = require('./vacations').approvedDays(workers.map(w => w.id), week, L.addDays(week, 6)); // урлоп поверх доступності
     return { week, deadline: deadlineFor(week), open: beforeDeadline(week), workers,
-      days: L.dates(week, L.addDays(week, 6)).map(date => ({ date, dow: L.dow(date), cells: Object.fromEntries(rows.filter(r => r.date === date).map(r => [r.user_id, { ...r, updated_name: L.userName(r.updated_by) }])) })) };
+      days: L.dates(week, L.addDays(week, 6)).map(date => ({ date, dow: L.dow(date), cells: Object.fromEntries(rows.filter(r => r.date === date).map(r => [r.user_id, { ...r, updated_name: L.userName(r.updated_by) }])
+        .concat(workers.filter(w => (vac[w.id] || new Set()).has(date)).map(w => [w.id, { user_id: w.id, date, kind: 'vac', updated_name: '' }]))) })) };
   }));
   const checkWorker = (req, uid) => { const u = get('SELECT * FROM users WHERE id=?', uid); if (!u) bad('not found'); return u; };
   app.put('/api/avail/user/:uid', wrap(req => {

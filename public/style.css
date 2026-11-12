@@ -117,3 +117,16 @@ table.avtable td.avcell:hover{outline:2px solid var(--acc);outline-offset:-2px}
 .avbtns button.on{background:var(--acc);color:#fff;border-color:var(--acc)}
 .avtimes label{display:flex;gap:6px;align-items:center}
 .sunbox{border-color:#e6cf6a}
+
+/* урлоп */
+:root{--vfree:#e3f4e7;--vbusy:#f9d3d3;--vpend:#fff0b3;--vmine:#d6e6fb}
+@media (prefers-color-scheme:dark){:root{--vfree:#1d3a25;--vbusy:#4d2222;--vpend:#4a4114;--vmine:#1d3352}}
+.vcal{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:16px}
+.vmname{font-weight:600;margin-bottom:6px}
+.vgrid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px}
+.vdow{font-size:11px;color:var(--mute);text-align:center}
+.vday{padding:3px 1px;min-height:44px;border-radius:6px;font-size:12px;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;overflow:hidden;border:1px solid transparent}
+.vday span{font-size:9.5px;line-height:1.1;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.vd-free{background:var(--vfree)}.vd-busy{background:var(--vbusy);color:var(--red)}.vd-pend{background:var(--vpend)}.vd-mine{background:var(--vmine)}.vd-past{background:transparent;color:var(--mute);opacity:.5}
+.vd-sel{border:2px solid var(--acc)!important}
+.vleg{padding:2px 8px;border-radius:6px}

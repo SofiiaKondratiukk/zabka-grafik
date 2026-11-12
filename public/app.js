@@ -79,13 +79,13 @@ function renderPick() {
 async function logout() { await api('POST', '/api/logout'); S.me = null; sessionStorage.clear(); renderLogin(); }
 
 const PAGES = {
-  home: { fn: pageHome }, schedule: { fn: pageSchedule }, avail: { fn: pageMyAvail }, disposition: { fn: pageDisposition, admin: true }, tasks: { fn: pageTasks, admin: true }, hours: { fn: pageHours }, requests: { fn: pageRequests }, notes: { fn: pageNotes },
+  home: { fn: pageHome }, schedule: { fn: pageSchedule }, avail: { fn: pageMyAvail }, vacation: { fn: pageVacation }, disposition: { fn: pageDisposition, admin: true }, tasks: { fn: pageTasks, admin: true }, hours: { fn: pageHours }, requests: { fn: pageRequests }, notes: { fn: pageNotes },
   warnings: { fn: pageWarnings, admin: true }, shiftcards: { fn: pageShiftCards, admin: true }, reports: { fn: pageReports, admin: true }, workers: { fn: pageWorkers, admin: true },
   locations: { fn: pageLocations, owner: true }, months: { fn: pageMonths, admin: true }, audit: { fn: pageAudit, admin: true },
   settings: { fn: pageSettings }, notifications: { fn: pageNotifications },
 };
 function navHtml(page) {
-  const items = [['home', t('nav_home')], ['schedule', t('nav_schedule')], ['avail', t('nav_avail')], ['hours', t('nav_hours')], ['requests', t('nav_requests')], ['notes', t('nav_notes')]];
+  const items = [['home', t('nav_home')], ['schedule', t('nav_schedule')], ['avail', t('nav_avail')], ['vacation', t('nav_vacation')], ['hours', t('nav_hours')], ['requests', t('nav_requests')], ['notes', t('nav_notes')]];
   if (isAdmin()) items.push(['tasks', t('nav_tasks')], ['disposition', t('nav_disposition')], ['shiftcards', t('nav_shiftcards')], ['warnings', t('nav_warnings')], ['reports', t('nav_reports')], ['workers', t('nav_workers')], ['months', t('nav_months')], ['audit', t('nav_audit')]);
   if (isOwner()) items.push(['locations', t('nav_locations')]);
   items.push(['settings', t('nav_settings')]);
@@ -665,14 +665,15 @@ async function pageShiftCards(el) {
 const AV_KINDS = ['all', 's1', 's2', 'rs', 'from', 'to', 'range', 'no'];
 const avDesc = e => {
   if (!e) return t('av_none');
+  if (e.kind === 'vac') return t('av_vac');
   if (e.kind === 'from') return t('av_btn_from').replace('…', hm(e.start));
   if (e.kind === 'to') return t('av_btn_to').replace('…', hm(e.end));
   if (e.kind === 'range') return t('av_btn_range').replace('…', hm(e.start)).replace('…', hm(e.end));
   return t('av_' + e.kind);
 };
-const avClass = e => !e ? 'av-none' : e.kind === 'all' ? 'av-full' : e.kind === 'no' ? 'av-no' : 'av-part';
+const avClass = e => !e ? 'av-none' : e.kind === 'all' ? 'av-full' : (e.kind === 'no' || e.kind === 'vac') ? 'av-no' : 'av-part';
 function avInterval(e, date) {
-  if (!e || e.kind === 'no') return null;
+  if (!e || e.kind === 'no' || e.kind === 'vac') return null;
   if (e.kind === 'all') return [0, 1440];
   if (['s1', 's2', 'rs'].includes(e.kind)) return DEF(date, e.kind);
   if (e.kind === 'from') return [e.start, 1440];
@@ -902,6 +903,101 @@ async function tgAdminCard(box) {
   if ($('#tgdel', box)) $('#tgdel', box).onclick = async () => { if (!confirm(t('delete_q'))) return; await api('POST', '/api/tg/token', { remove: true }); after(); };
   $('#tgcheck', box).onclick = async () => { await api('POST', '/api/tg/check'); after(); };
   $('#tgtest', box).onclick = async () => { try { const r = await api('POST', '/api/tg/test'); res.innerHTML = `<div class="okbox">✅ ${t('tg_test_sent', { time: lts(r.delivered_at.replace('T', ' ').slice(0, 19)) })}</div>`; } catch (e) { res.innerHTML = errBox(e); } };
+}
+
+// ---------------- УРЛОП ----------------
+const vacStatus = v => `<span class="pill ${v.status}">${t('vac_st_' + v.status)}</span>`;
+const vacRange = v => v.start === v.end ? ddmm(v.start) + '.' + v.start.slice(0, 4) : `${ddmm(v.start)} – ${ddmm(v.end)}.${v.end.slice(0, 4)}`;
+const VS = { from: '', to: '', months: 0, picking: null };
+async function pageVacation(el) {
+  const r = await api('GET', `/api/vacations?loc=${S.loc}`);
+  const admin = isOwner();
+  const me = S.me.user.id;
+  // хто у відпустці в кожен день (очікує / підтверджено)
+  const onDay = d => r.list.filter(v => v.start <= d && v.end >= d);
+  const dayState = d => {
+    const on = onDay(d); const others = on.filter(v => v.user_id !== me);
+    if (d < r.today) return { cls: 'vd-past', on };
+    if (on.some(v => v.user_id === me)) return { cls: 'vd-mine', on };
+    if (others.length >= r.max) return { cls: others.some(v => v.status === 'approved') ? 'vd-busy' : 'vd-pend', on };
+    return { cls: 'vd-free', on };
+  };
+  const month0 = r.today.slice(0, 7);
+  const monthAdd = (m, n) => { const [y, mo] = m.split('-').map(Number); return fd(new Date(Date.UTC(y, mo - 1 + n, 1))).slice(0, 7); };
+  const calMonth = m => {
+    const [first, last] = monthRange(m); const pad = dow(first);
+    let cells = '';
+    for (let i = 0; i < pad; i++) cells += '<div></div>';
+    for (let d = first; d <= last; d = addDays(d, 1)) {
+      const st = dayState(d);
+      const sel = VS.from && d >= VS.from && d <= (VS.to || VS.from);
+      const tip = st.on.map(v => `${v.name}: ${vacRange(v)} (${t('vac_st_' + v.status)})`).join('\n');
+      cells += `<button type="button" class="vday ${st.cls} ${sel ? 'vd-sel' : ''}" data-d="${d}" title="${esc(tip)}" ${st.cls === 'vd-past' ? 'disabled' : ''}><b>${+d.slice(8)}</b>${st.on.length ? `<span>${esc(st.on.map(v => v.name.split(' ')[0]).join(', '))}</span>` : ''}</button>`;
+    }
+    const nm = new Date(first + 'T00:00:00Z').toLocaleDateString(S.lang === 'pl' ? 'pl-PL' : 'uk-UA', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+    return `<div class="vmonth"><div class="vmname">${esc(nm.charAt(0).toUpperCase() + nm.slice(1))}</div><div class="vgrid">${[0, 1, 2, 3, 4, 5, 6].map(i => `<div class="vdow">${t('dow_' + i)}</div>`).join('')}${cells}</div></div>`;
+  };
+  const upcoming = r.list.filter(v => v.end >= r.today).sort((a, b) => a.start.localeCompare(b.start));
+  el.innerHTML = `<h1>${t('nav_vacation')}</h1>
+    ${admin && r.pending.length ? `<div class="card" style="border-color:var(--red)"><h2 style="margin-top:0">${t('vac_pending_title')} (${r.pending.length})</h2><div class="list">${r.pending.map(v => `<div class="item" data-id="${v.id}"><div class="grow">
+        <b>${esc(v.name)}</b> — ${vacRange(v)} <span class="mute">(${t('vac_days', { n: v.days })}, ${esc(v.locations)})</span>${v.comment ? `<br>💬 ${esc(v.comment)}` : ''}<br><span class="small mute">${t('c_created')}: ${lts(v.created_at)}</span>
+        <div class="row" style="margin-top:6px"><input class="dc grow" placeholder="${t('decision_comment_opt')}"><button class="pri sm" data-ok="${v.id}">✓ ${t('approve')}</button><button class="danger sm" data-no="${v.id}">✕ ${t('reject')}</button></div><div class="derr"></div></div></div>`).join('')}</div></div>` : ''}
+    <div class="card"><h2 style="margin-top:0">${admin ? t('vac_new_admin') : t('vac_new')}</h2>
+      <p class="small mute">${t('vac_help', { max: r.max })}</p>
+      ${admin ? `<label class="f"><span>${t('worker')}</span><select id="vu">${r.workers.map(w => `<option value="${w.id}" ${w.id === me ? 'selected' : ''}>${esc(w.name)}</option>`).join('')}</select></label>` : ''}
+      <div class="row"><label class="f grow"><span>${t('vac_from')}</span><input type="date" id="vf" min="${admin ? '' : r.today}" value="${VS.from}"></label><label class="f grow"><span>${t('vac_to')}</span><input type="date" id="vt" min="${admin ? '' : r.today}" value="${VS.to}"></label></div>
+      <div id="vcheck"></div>
+      <label class="f"><span>${t('comment_opt')}</span><input id="vc" maxlength="300" style="width:100%"></label>
+      ${admin ? `<label class="f"><input type="checkbox" id="vapp" checked> ${t('vac_add_approved')}</label><label class="f"><input type="checkbox" id="vforce"> ${t('vac_force')}</label>` : ''}
+      <div id="verr"></div><button class="pri" id="vsend">${admin ? t('save') : t('send_request')}</button></div>
+    <div class="card"><div class="row"><h2 class="grow" style="margin:0">${t('vac_calendar')} · ${esc(curLoc().name)}</h2><button class="sm" id="vprev">‹</button><button class="sm" id="vnext">›</button></div>
+      <div class="row small" style="margin:8px 0"><span class="vleg vd-free">${t('vac_leg_free')}</span><span class="vleg vd-busy">${t('vac_leg_busy')}</span><span class="vleg vd-pend">${t('vac_leg_pend')}</span><span class="vleg vd-mine">${t('vac_leg_mine')}</span></div>
+      <div class="vcal">${[0, 1, 2].map(i => calMonth(monthAdd(month0, VS.months + i))).join('')}</div>
+      <p class="small mute">${t('vac_cal_help')}</p></div>
+    <div class="card"><h2 style="margin-top:0">${t('vac_list_title')}</h2>${upcoming.length ? `<div class="list">${upcoming.map(v => `<div class="item"><div class="grow"><b>${esc(v.name)}</b> — ${vacRange(v)} <span class="mute">(${t('vac_days', { n: v.days })})</span> ${vacStatus(v)}${v.comment ? `<br><span class="small">💬 ${esc(v.comment)}</span>` : ''}</div>
+        ${(admin || (v.mine && v.status === 'pending')) ? `<button class="sm danger" data-cancel="${v.id}">${v.mine && !admin ? t('withdraw') : t('vac_cancel')}</button>` : ''}</div>`).join('')}</div>` : `<p class="mute">${t('vac_none_planned')}</p>`}</div>
+    <div class="card"><h2 style="margin-top:0">${t('vac_my_title')}</h2>${r.mine.length ? `<div class="list">${r.mine.map(v => `<div class="item"><div class="grow">${vacRange(v)} <span class="mute">(${t('vac_days', { n: v.days })})</span> ${vacStatus(v)}${v.decided_name && v.status !== 'pending' ? `<br><span class="small mute">${esc(v.decided_name)} ${lts(v.decided_at)}${v.decision_comment ? ' — ' + esc(v.decision_comment) : ''}</span>` : ''}</div>
+        ${v.status === 'pending' ? `<button class="sm" data-cancel="${v.id}">${t('withdraw')}</button>` : ''}</div>`).join('')}</div>` : `<p class="mute">${t('no_data')}</p>`}</div>
+    ${admin ? `<div class="card"><div class="row"><span>${t('vac_max_label')}</span><input type="number" id="vmax" min="1" max="10" value="${r.max}" style="width:80px"><button class="sm" id="vmaxs">${t('save')}</button></div></div>` : ''}`;
+  const reload = () => pageVacation(el);
+  // живa перевірка вибраних дат
+  const check = async () => {
+    VS.from = $('#vf', el).value; VS.to = $('#vt', el).value;
+    const box = $('#vcheck', el); const btn = $('#vsend', el);
+    $$('.vday', el).forEach(b => b.classList.toggle('vd-sel', !!VS.from && b.dataset.d >= VS.from && b.dataset.d <= (VS.to || VS.from)));
+    if (!VS.from || !VS.to) { box.innerHTML = ''; btn.disabled = false; return; }
+    const c = await api('GET', `/api/vacations/check?start=${VS.from}&end=${VS.to}${admin && $('#vu', el) ? '&user=' + $('#vu', el).value : ''}`);
+    if (c.error) { box.innerHTML = `<div class="warnbox">${esc(c.error)}</div>`; btn.disabled = true; return; }
+    box.innerHTML = c.ok ? `<div class="okbox">✅ ${t('vac_free_ok', { n: c.days })}</div>` : `<div class="warnbox"><span class="excl">!</span>${esc(c.text)}</div>`;
+    btn.disabled = !c.ok && !(admin && $('#vforce', el).checked);
+  };
+  $('#vf', el).onchange = () => { VS.picking = null; if ($('#vt', el).value < $('#vf', el).value) $('#vt', el).value = $('#vf', el).value; check(); };
+  $('#vt', el).onchange = check;
+  if ($('#vu', el)) $('#vu', el).onchange = check;
+  if ($('#vforce', el)) $('#vforce', el).onchange = check;
+  // вибір дат кліком у календарі: перший клік — початок, другий — кінець
+  $$('.vday', el).forEach(b => b.onclick = () => {
+    const d = b.dataset.d;
+    if (!VS.picking || d < VS.picking) { $('#vf', el).value = d; $('#vt', el).value = d; VS.picking = d; }
+    else { $('#vt', el).value = d; VS.picking = null; }
+    check();
+  });
+  $('#vprev', el).onclick = () => { VS.months -= 1; reload(); };
+  $('#vnext', el).onclick = () => { VS.months += 1; reload(); };
+  $('#vsend', el).onclick = async () => {
+    const body = { start: $('#vf', el).value, end: $('#vt', el).value, comment: $('#vc', el).value };
+    if (admin) Object.assign(body, { user_id: Number($('#vu', el).value), approve: $('#vapp', el).checked, force: $('#vforce', el).checked });
+    try { await api('POST', '/api/vacations', body); toast(admin && body.approve ? t('saved') : t('request_sent')); VS.from = VS.to = ''; reload(); }
+    catch (e) { $('#verr', el).innerHTML = errBox(e); }
+  };
+  $$('[data-ok],[data-no]', el).forEach(b => b.onclick = async () => {
+    const item = b.closest('.item');
+    try { await api('POST', `/api/vacations/${b.dataset.ok || b.dataset.no}/decide`, { approve: !!b.dataset.ok, comment: $('.dc', item).value }); toast(t('saved')); reload(); }
+    catch (e) { $('.derr', item).innerHTML = errBox(e); }
+  });
+  $$('[data-cancel]', el).forEach(b => b.onclick = async () => { if (!confirm(t('vac_cancel_q'))) return; try { await api('POST', `/api/vacations/${b.dataset.cancel}/cancel`); reload(); } catch (e) { toast(e.message); } });
+  if ($('#vmaxs', el)) $('#vmaxs', el).onclick = async () => { try { await api('PUT', '/api/vacations/settings', { max: Number($('#vmax', el).value) }); toast(t('saved')); reload(); } catch (e) { toast(e.message); } };
+  if (VS.from && VS.to) check();
 }
 
 window.closeModal = closeModal;
