@@ -79,7 +79,7 @@ function renderPick() {
 async function logout() { await api('POST', '/api/logout'); S.me = null; sessionStorage.clear(); renderLogin(); }
 
 const PAGES = {
-  home: { fn: pageHome }, schedule: { fn: pageSchedule }, scheduleall: { fn: pageScheduleAll, admin: true }, avail: { fn: pageMyAvail }, vacation: { fn: pageVacation }, disposition: { fn: pageDisposition, admin: true }, tasks: { fn: pageTasks, admin: true }, hours: { fn: pageHours }, requests: { fn: pageRequests }, notes: { fn: pageNotes },
+  home: { fn: pageHome }, schedule: { fn: pageSchedule }, scheduleall: { fn: pageScheduleAll }, avail: { fn: pageMyAvail }, vacation: { fn: pageVacation }, disposition: { fn: pageDisposition, admin: true }, tasks: { fn: pageTasks, admin: true }, hours: { fn: pageHours }, requests: { fn: pageRequests }, notes: { fn: pageNotes },
   warnings: { fn: pageWarnings, admin: true }, shiftcards: { fn: pageShiftCards, admin: true }, reports: { fn: pageReports, admin: true }, workers: { fn: pageWorkers, admin: true },
   locations: { fn: pageLocations, owner: true }, months: { fn: pageMonths, admin: true }, audit: { fn: pageAudit, admin: true },
   settings: { fn: pageSettings }, notifications: { fn: pageNotifications },
@@ -158,6 +158,7 @@ async function pageHome(el) {
 // ---------------- SCHEDULE ----------------
 let schWeek = null;
 async function pageSchedule(el) {
+  if (isPhone()) return pageScheduleMobile(el, 'single'); // телефон: компактна таблиця
   schWeek = schWeek || weekStart(today());
   const v = await api('GET', `/api/schedule/${S.loc}?week=${schWeek}`);
   const admin = isAdmin();
@@ -168,7 +169,7 @@ async function pageSchedule(el) {
   let html = `<div class="row" style="justify-content:space-between"><h1>${t('nav_schedule')}: ${ddmm(schWeek)} – ${ddmm(end)}.${end.slice(0, 4)}</h1>
     <div class="row"><button id="wprev">‹</button><button id="wnow">${t('this_week')}</button><button id="wnext">›</button></div></div>
     <div class="row" style="margin-bottom:10px">${v.status === 'published' ? `<span class="pill pub">${t('published')}</span>` : v.status === 'hidden' ? `<span class="pill draft">${t('not_published_yet')}</span>` : `<span class="pill draft">${t('draft')}</span>`}
-    ${admin ? `<span class="small mute">${t('sched_rules_info')}</span><span class="grow"></span><a class="pri" href="#/scheduleall" onclick="saWeek='${schWeek}'" style="text-decoration:none;padding:8px 14px;border-radius:8px;background:var(--acc);color:#fff">🗂 ${t('sched_all_btn')}</a>` : ''}</div>`;
+    ${admin ? `<span class="small mute">${t('sched_rules_info')}</span>` : ''}</div>${schedToggle('single')}`;
   if (v.status === 'hidden') { el.innerHTML = html + `<div class="card mute">${t('schedule_hidden')}</div>`; bindWeekNav(el); return; }
   const editable = admin;
   html += `<div id="sch-err"></div><div class="tbl-wrap"><table class="t sch"><thead><tr><th>${t('day')}</th>${slots.map(s => `<th>${slotName(s)}<div class="small mute" style="font-weight:400">${s === 'dl' ? t('dl_any_day') : s === 'rs' ? '18:00–23:00' : s === 's1' ? '06:00/08:00–14:30' : '14:30–23:00'}</div></th>`).join('')}</tr></thead><tbody>`;
@@ -1016,6 +1017,7 @@ function saOptions(workers, avail, date, slot, s, en, selected) {
   return ['full', 'partial', 'none', 'no'].filter(g => groups[g].length).map(g => `<optgroup label="${t('av_g_' + g)}">${groups[g].map(x => opt(x, g)).join('')}</optgroup>`).join('');
 }
 async function pageScheduleAll(el, keepMsg) {
+  if (isPhone() || !isAdmin()) return pageScheduleMobile(el, 'all'); // телефон / працівник: компактні таблиці
   el.style.maxWidth = 'none'; // усі три локації на всю ширину екрана
   saWeek = saWeek || weekStart(today());
   const end = addDays(saWeek, 6);
@@ -1055,7 +1057,7 @@ async function pageScheduleAll(el, keepMsg) {
   }
   el.innerHTML = `<div class="row" style="justify-content:space-between"><h1>${t('nav_schedule_all')}: ${ddmm(saWeek)} – ${ddmm(end)}.${end.slice(0, 4)}</h1>
       <div class="row"><button id="sw1">‹</button><button id="sw0">${t('this_week')}</button><button id="sw2">›</button></div></div>
-    <p class="small mute">${t('sched_all_help')}</p><div id="sa-msg">${keepMsg || ''}</div>
+    ${schedToggle('all')}<p class="small mute">${t('sched_all_help')}</p><div id="sa-msg">${keepMsg || ''}</div>
     <div class="tbl-wrap"><table class="t sch schall"><thead><tr>${head1}</tr><tr>${head2}</tr></thead><tbody>${rows}</tbody></table></div>
     <div class="row" style="margin-top:12px"><button id="sacopy">${t('copy_prev_week_all')}</button><span class="grow"></span>
       <button id="sasave" class="pri">${t('save_all_locs')}</button>${data.some(d => d.v.status !== 'published') ? `<button id="sapub" class="pri">${t('publish_all_locs')}</button>` : ''}</div>`;
@@ -1139,6 +1141,141 @@ function markDayDuplicates(entries, elsewhere, msgSel = '.dup-msg') {
       o.textContent = !others.length ? o.dataset.base : (o.value === sel.value ? `🔴 ${nm}` : `🔴 ${nm} — ${t('dup_already', { where: others.map(where).join(', ') })}`);
     }
   }
+}
+
+// ---------------- ГРАФІК НА ТЕЛЕФОНІ: КОМПАКТНІ ТАБЛИЦІ + ПЕРЕМИКАЧ ЛОКАЦІЙ ----------------
+const isPhone = () => window.matchMedia('(max-width: 760px)').matches;
+/** Перемикач «Ця локація / Усі локації» (адміністратор — завжди; працівник — якщо має кілька локацій). */
+function schedToggle(mode) {
+  if (!isAdmin() && S.me.locations.length < 2) return '';
+  return `<div class="seg schtoggle"><a href="#/schedule" class="${mode === 'single' ? 'on' : ''}" onclick="if(saWeek)schWeek=saWeek">📍 ${t('sched_one_loc')}</a><a href="#/scheduleall" class="${mode === 'all' ? 'on' : ''}" onclick="if(schWeek)saWeek=schWeek">🗂 ${isAdmin() ? t('sched_all_locs_short') : t('sched_my_locs')}</a></div>`;
+}
+const SLOT_TIMES = { s1: '6:00–14:30', s2: '14:30–23:00', dl: '', rs: '18–23' };
+let mobDirty = false;
+async function pageScheduleMobile(el, mode) {
+  const single = mode === 'single';
+  let week = single ? (schWeek = schWeek || weekStart(today())) : (saWeek = saWeek || weekStart(today()));
+  const admin = isAdmin();
+  const locList = single ? [curLoc()] : S.me.locations;
+  const data = await Promise.all(locList.map(async l => {
+    const [v, workers] = await Promise.all([api('GET', `/api/schedule/${l.id}?week=${week}`), admin ? api('GET', `/api/locations/${l.id}/workers`) : Promise.resolve([])]);
+    return { loc: v.location, v, workers, slots: ['s1', 's2', 'dl'].concat(v.location.has_restock ? ['rs'] : []) };
+  }));
+  const names = {};
+  for (const d of data) { d.workers.forEach(w => names[w.id] = w.name); d.v.days.forEach(day => Object.values(day.cells).forEach(c => { if (c.user_id) names[c.user_id] = c.name; })); }
+  const locName = id => (data.find(d => String(d.loc.id) === String(id)) || {}).loc.name;
+  // стан клітинок: "loc|date|slot" -> {user_id, start, end, id, cancelled}
+  const st = {};
+  for (const d of data) d.v.days.forEach(day => d.slots.forEach(sl => {
+    const c = day.cells[sl];
+    st[`${d.loc.id}|${day.date}|${sl}`] = c && c.user_id ? { user_id: c.user_id, start: c.start, end: c.end, id: c.id, cancelled: c.cancelled } : { user_id: null, start: null, end: null, id: c && c.id };
+  }));
+  mobDirty = false;
+  const dupInfo = () => {
+    const byDay = {}; const add = (key, e) => (byDay[key] = byDay[key] || []).push(e);
+    for (const [k, c] of Object.entries(st)) if (c.user_id) { const [loc, date, sl] = k.split('|'); add(date + ':' + c.user_id, { k, where: `${locName(loc)} · ${slotName(sl)}` }); }
+    if (single && data[0].v.elsewhere) for (const [date, list] of Object.entries(data[0].v.elsewhere)) for (const x of list) add(date + ':' + x.user_id, { k: null, where: `${x.loc} · ${slotName(x.slot)}` });
+    const out = {};
+    for (const list of Object.values(byDay)) if (list.length > 1) for (const e of list) if (e.k) out[e.k] = list.filter(x => x !== e).map(x => x.where);
+    return { out, byDay };
+  };
+  const table = d => {
+    if (d.v.status === 'hidden') return `<div class="card mute"><b>${esc(d.loc.name)}</b>: ${t('schedule_hidden')}</div>`;
+    const dup = admin ? dupInfo().out : {};
+    let h = `<div class="ct-box"><div class="ct-title"><b>${esc(d.loc.name)}</b>${admin ? (d.v.status === 'published' ? `<span class="pill pub">${t('published')}</span>` : `<span class="pill draft">${t('draft')}</span>`) : ''}</div>
+      <table class="ct"><thead><tr><th class="ct-day"></th>${d.slots.map(sl => `<th>${t('slot_short_' + sl)}${SLOT_TIMES[sl] ? `<small>${SLOT_TIMES[sl]}</small>` : ''}</th>`).join('')}</tr></thead><tbody>`;
+    d.v.days.forEach(day => {
+      h += `<tr class="${day.dow === 6 ? 'sun' : ''} ${day.date === today() ? 'today' : ''}"><th class="ct-day">${t('dow_' + day.dow)}<small>${ddmm(day.date)}${day.dow === 6 ? ' · 8:00' : ''}</small></th>`;
+      d.slots.forEach(sl => {
+        const k = `${d.loc.id}|${day.date}|${sl}`; const c = st[k];
+        const tl = c.user_id && sl !== 'dl' ? timeLabel({ date: day.date, slot: sl, start: c.start, end: c.end }) : '';
+        const empty = admin && d.v.status === 'published' && sl !== 'dl' && day.date >= today() && !c.user_id;
+        const mine = c.user_id === S.me.user.id;
+        const pl = sl === 'dl' && day.delivery && day.delivery.pallets != null ? `<small>📦 ${pal(day.delivery.pallets)}</small>` : '';
+        h += `<td class="ctc ${dup[k] ? 'ct-dup' : ''} ${empty ? 'ct-empty' : ''} ${mine ? 'ct-mine' : ''} ${admin && !day.closed ? 'ct-edit' : ''}" data-k="${k}">${empty ? '<b class="red">! </b>' : ''}${c.user_id ? `<span class="${c.cancelled ? 'cancel' : ''}">${esc(names[c.user_id] || '?')}</span>` : (admin && !day.closed ? '<span class="ct-plus">+</span>' : '<span class="mute">—</span>')}${tl ? `<small>${esc(tl)}</small>` : ''}${pl}${dup[k] ? '<small>🔴</small>' : ''}</td>`;
+      });
+      h += '</tr>';
+    });
+    return h + '</tbody></table></div>';
+  };
+  const cellsFor = d => { const out = []; d.v.days.forEach(day => d.slots.forEach(sl => { const c = st[`${d.loc.id}|${day.date}|${sl}`]; out.push({ date: day.date, slot: sl, user_id: c.user_id || null, start: c.user_id && c.start != null ? hm(c.start) : null, end: c.user_id && c.end != null ? hm(c.end) : null }); })); return out; };
+  const render = msg => {
+    const end = addDays(week, 6);
+    const anyDraft = data.some(d => d.v.status !== 'published' && d.v.status !== 'hidden');
+    el.innerHTML = `<div class="row" style="justify-content:space-between"><h1 style="margin-bottom:6px">${t('nav_schedule')}: ${ddmm(week)} – ${ddmm(end)}</h1></div>
+      ${schedToggle(mode)}
+      <div class="row" style="margin:8px 0"><button id="mw1">‹</button><button id="mw0">${t('this_week')}</button><button id="mw2">›</button></div>
+      ${admin ? `<p class="small mute">${t('mob_tap_help')}</p>` : ''}<div id="mob-msg">${msg || ''}</div>
+      ${data.map(table).join('')}
+      ${admin ? `<div style="height:76px"></div><div class="ct-bar"><button id="mcopy" class="sm">⧉ ${t('mob_copy')}</button><button id="msave" class="pri">${t('save')}${data.length > 1 ? ' · ' + data.length : ''}</button>${anyDraft ? `<button id="mpub" class="pri">${t('publish')}</button>` : ''}</div>` : ''}`;
+    const go = w => { if (mobDirty && !confirm(t('unsaved_q'))) return; if (single) schWeek = w; else saWeek = w; pageScheduleMobile(el, mode); };
+    $('#mw1', el).onclick = () => go(addDays(week, -7)); $('#mw2', el).onclick = () => go(addDays(week, 7)); $('#mw0', el).onclick = () => go(weekStart(today()));
+    if (!admin) return;
+    $$('td.ct-edit', el).forEach(td => td.onclick = () => pick(td.dataset.k));
+    $('#msave', el).onclick = () => save(false);
+    if ($('#mpub', el)) $('#mpub', el).onclick = () => { if (confirm(t('publish_q'))) save(true); };
+    $('#mcopy', el).onclick = copyPrev;
+  };
+  // вибір працівника на клітинку (нижня панель)
+  const pick = k => {
+    const [locId, date, sl] = k.split('|'); const d = data.find(x => String(x.loc.id) === locId); const day = d.v.days.find(x => x.date === date);
+    const c = st[k]; const [ds, de] = DEF(date, sl);
+    const k1 = `${locId}|${date}|s1`, k2 = `${locId}|${date}|s2`;
+    const defS = c.start ?? (sl === 's2' && st[k1] && st[k1].user_id ? st[k1].end : ds);
+    const defE = c.end ?? (sl === 's1' && st[k2] && st[k2].user_id ? st[k2].start : de);
+    const { byDay } = dupInfo();
+    const busy = uid => (byDay[date + ':' + uid] || []).filter(x => x.k !== k).map(x => x.where);
+    const groups = { full: [], partial: [], none: [], no: [] };
+    for (const u of d.workers) { const e = d.v.avail ? (d.v.avail[u.id] || {})[date] : null; groups[d.v.avail ? avCoverage(e, date, sl === 'dl' ? null : defS, sl === 'dl' ? null : defE) : 'none'].push({ u, e }); }
+    const icon = { full: '✅', partial: '🟡', none: '▫️', no: '⛔' };
+    const btn = ({ u, e }, g) => { const b = busy(u.id); return `<button type="button" class="pk ${c.user_id === u.id ? 'on' : ''} ${b.length ? 'pk-busy' : ''}" data-u="${u.id}"><span>${icon[g]} ${esc(u.name)}</span>${(g === 'partial' || g === 'no') && e ? `<small>${esc(avDesc(e))}</small>` : ''}${b.length ? `<small class="red">🔴 ${esc(t('dup_already', { where: b.join(', ') }))}</small>` : ''}</button>`; };
+    const body = modal(`<h2 style="margin:0 0 2px">${t('dow_full_' + dow(date))} ${ddmm(date)} · ${slotName(sl)}</h2><p class="small mute" style="margin:0 0 8px">${esc(d.loc.name)}</p>
+      ${sl !== 'dl' ? `<div class="row pk-times"><label>${t('start')} <input type="time" id="pks" value="${hm(defS)}"></label><label>${t('end')} <input type="time" id="pke" value="${hm(defE)}"></label>${c.user_id ? `<button class="pri sm" id="pkok">✓ ${t('mob_time_ok')}</button>` : ''}</div>` : ''}
+      <div class="pk-list"><button type="button" class="pk ${!c.user_id ? 'on' : ''}" data-u=""><span>— ${t('nobody')}</span></button>
+      ${['full', 'partial', 'none', 'no'].filter(g => groups[g].length).map(g => `<div class="pk-g">${t('av_g_' + g)}</div>${groups[g].map(x => btn(x, g)).join('')}`).join('')}</div>
+      <div class="row" style="margin-top:10px">${single && d.v.status === 'published' && c.id && st[k].user_id && sl !== 'dl' ? `<button class="sm" id="pkfact">✎ ${t('fact')}</button>` : ''}
+      ${single && d.v.status === 'published' && sl === 'dl' && date <= today() && (c.user_id || day.delivery) ? `<button class="sm" id="pkpal">📦 ${t('pallets_short')}</button>` : ''}</div>`);
+    const apply = uid => {
+      const s = sl === 'dl' ? null : (parseHM($('#pks', body).value) ?? ds), en = sl === 'dl' ? null : (parseHM($('#pke', body).value) ?? de);
+      st[k] = { ...st[k], user_id: uid ? Number(uid) : null, start: uid ? s : null, end: uid ? en : null };
+      if (uid && sl === 's1' && st[k2] && st[k2].user_id) st[k2].start = en; // пересменка: кінець 1-ї = початок 2-ї
+      if (uid && sl === 's2' && st[k1] && st[k1].user_id) st[k1].end = s;
+      mobDirty = true; closeModal(); render();
+    };
+    $$('.pk', body).forEach(b => b.onclick = () => apply(b.dataset.u));
+    if ($('#pkok', body)) $('#pkok', body).onclick = () => apply(String(c.user_id));
+    if ($('#pkfact', body)) $('#pkfact', body).onclick = () => fixShiftModal(d.v, c.id, () => pageScheduleMobile(el, mode));
+    if ($('#pkpal', body)) $('#pkpal', body).onclick = () => palletModal(date, d.v, () => pageScheduleMobile(el, mode));
+  };
+  const copyPrev = async () => {
+    for (const d of data) {
+      const pv = await api('GET', `/api/schedule/${d.loc.id}?week=${addDays(week, -7)}`);
+      pv.days.forEach((pd_, i) => {
+        const date = addDays(week, i); if (d.v.days[i].closed) return;
+        for (const sl of d.slots) {
+          const src = pd_.cells[sl]; const [ds, de] = DEF(date, sl); const k = `${d.loc.id}|${date}|${sl}`;
+          st[k] = src && src.plan_user_id ? { ...st[k], user_id: src.plan_user_id, start: sl === 'dl' ? null : (src.plan_start ?? ds), end: sl === 'dl' ? null : (src.plan_end ?? de) } : { ...st[k], user_id: null, start: null, end: null };
+        }
+      });
+    }
+    mobDirty = true; render(`<div class="okbox">${t('copied_check')}</div>`);
+  };
+  const save = async publish => {
+    if (Object.keys(dupInfo().out).length && !confirm(t('dup_confirm'))) return;
+    const warns = [];
+    for (const d of data) if (d.v.avail) { S.workers = d.workers; warns.push(...availWarnings(d.v.avail, cellsFor(d)).map(w => (data.length > 1 ? '• ' + d.loc.name + ': ' + w.replace(/^• /, '') : w))); }
+    await loadWorkers();
+    if (warns.length && !confirm(t('av_warn_confirm') + '\n\n' + warns.join('\n'))) return;
+    const results = []; let ok = true;
+    for (const d of data) {
+      if (d.v.status === 'hidden') continue;
+      try { await api('PUT', `/api/schedule/${d.loc.id}`, { week, cells: cellsFor(d), publish: publish && d.v.status !== 'published' }); results.push(`<div class="okbox">✓ ${esc(d.loc.name)}: ${publish && d.v.status !== 'published' ? t('published_ok') : t('saved')}</div>`); }
+      catch (e) { ok = false; results.push(`<div><b>${esc(d.loc.name)}</b>${errBox(e)}</div>`); }
+    }
+    if (ok) { mobDirty = false; toast(publish ? t('published_ok') : t('saved')); pageScheduleMobile(el, mode); }
+    else { render(results.join('')); $('#mob-msg', el).scrollIntoView({ behavior: 'smooth' }); }
+  };
+  render();
 }
 
 window.closeModal = closeModal;

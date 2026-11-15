@@ -144,3 +144,43 @@ table.schall .cell select{font-size:13.5px;padding:6px 4px}
 /* одна людина — один запис на день */
 .cell.dup-bad select.who{border:2px solid var(--red);background:var(--redbg)}
 .cell .dup-msg:empty,.cell .sa-conf:empty{display:none}
+
+/* перемикач «Ця локація / Усі локації» */
+.schtoggle{margin:8px 0}
+.seg a{padding:7px 12px;text-decoration:none;color:var(--fg);font-size:14px;white-space:nowrap}
+.seg a.on{background:var(--acc);color:#fff}
+/* графік на телефоні — компактні таблиці */
+.ct-box{margin:0 0 18px}
+.ct-title{display:flex;gap:8px;align-items:center;margin:4px 0 6px;font-size:15px}
+table.ct{width:100%;border-collapse:collapse;table-layout:fixed;font-size:12.5px;background:var(--card);border-radius:8px;overflow:hidden}
+table.ct th,table.ct td{border:1px solid var(--line);padding:5px 4px;text-align:left;vertical-align:top;overflow:hidden;overflow-wrap:anywhere;line-height:1.25}
+table.ct thead th{background:var(--acc2);font-size:12px;font-weight:600}
+table.ct thead th small{display:block;font-weight:400;color:var(--mute);font-size:9.5px}
+table.ct th.ct-day{width:50px;background:var(--bg);font-weight:600}
+table.ct th.ct-day small{display:block;font-weight:400;color:var(--mute);font-size:10px}
+table.ct td.ctc{height:42px}
+table.ct td.ctc small{display:block;color:var(--mute);font-size:10.5px}
+table.ct td.ct-edit{cursor:pointer}
+table.ct td.ct-edit:active{background:var(--acc2)}
+table.ct tr.sun td,table.ct tr.sun th{background:var(--amber)}
+table.ct tr.today th.ct-day{box-shadow:inset 3px 0 0 var(--acc)}
+table.ct td.ct-mine{background:var(--acc)!important;color:#fff;font-weight:600}
+table.ct td.ct-mine small{color:#e8f5e9}
+table.ct td.ct-empty{background:var(--redbg)}
+table.ct td.ct-dup{background:var(--redbg)!important;color:var(--red);box-shadow:inset 0 0 0 2px var(--red)}
+.ct-plus{color:var(--mute);font-size:17px;line-height:1}
+.ct-bar{position:fixed;left:0;right:0;bottom:0;background:var(--card);border-top:1px solid var(--line);padding:10px 16px calc(10px + env(safe-area-inset-bottom));display:flex;gap:8px;z-index:20}
+.ct-bar button{flex:1;padding:12px 8px}
+.pk-times{margin-bottom:8px}.pk-times label{display:flex;gap:6px;align-items:center;font-size:14px}
+.pk-list{display:flex;flex-direction:column;gap:6px;max-height:52vh;overflow:auto;-webkit-overflow-scrolling:touch}
+.pk{text-align:left;padding:11px 12px;display:flex;flex-direction:column;gap:2px;font-size:15px}
+.pk small{font-size:12px;color:var(--mute)}
+.pk.on{border-color:var(--acc);background:var(--acc2);font-weight:600}
+.pk.pk-busy{border-color:var(--red)}
+.pk-g{font-size:12px;color:var(--mute);margin-top:8px;text-transform:uppercase;letter-spacing:.03em}
+@media (max-width:760px){
+  .modal{align-items:flex-end;padding:0}
+  .modal-box{margin:0;border-radius:16px 16px 0 0;max-height:92vh;overflow:auto;padding:16px 16px calc(16px + env(safe-area-inset-bottom))}
+}
+table.ct tr.today td{box-shadow:none}
+table.ct tr.today td.ct-dup{box-shadow:inset 0 0 0 2px var(--red)}
