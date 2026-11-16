@@ -59,8 +59,32 @@ function rememberUrl(req) {
   }
 }
 
+async function downloadFile(fileId) {
+  const tk = token();
+  const f = await call('getFile', { file_id: fileId });
+  if (!f.ok) throw new Error('getFile failed');
+  const r = await fetch(`https://api.telegram.org/file/bot${tk}/${f.result.file_path}`);
+  if (!r.ok) throw new Error('download failed');
+  return Buffer.from(await r.arrayBuffer());
+}
+/** Файл від користувача: експорт «Пшецена» → імпорт і завдання для нових товарів. */
+async function handleDocument(m) {
+  const u = get('SELECT * FROM users WHERE tg_chat_id=? AND active=1', String(m.chat.id));
+  if (!u) return call('sendMessage', { chat_id: m.chat.id, text: MSG_NO_CODE });
+  if (!['admin', 'owner'].includes(u.role)) return call('sendMessage', { chat_id: m.chat.id, text: 'Файли «Пшецена» може надсилати лише адміністратор.' });
+  const name = m.document.file_name || '';
+  if (!/\.(xlsx|csv)$/i.test(name)) return call('sendMessage', { chat_id: m.chat.id, text: 'Надішліть файл Excel (.xlsx) — експорт зі звіту «Lista indeksów z niskim terminem ważności».' });
+  await call('sendMessage', { chat_id: m.chat.id, text: '⏳ Обробляю файл…' });
+  try {
+    const buf = await downloadFile(m.document.file_id);
+    const r = await require('./przecena').importFile(buf, name, u, 'telegram');
+    await call('sendMessage', { chat_id: m.chat.id, text: r.text.slice(0, 4000) });
+  } catch (e) { await call('sendMessage', { chat_id: m.chat.id, text: '❌ ' + (e.message || 'Не вдалося обробити файл') }); }
+}
+
 async function handleUpdate(upd) {
   const m = upd && upd.message;
+  if (m && m.document && m.chat) return handleDocument(m);
   if (!m || !m.text || !m.chat) return;
   const code = (/^\/start(?:@\w+)?\s+(\S+)/.exec(m.text) || [])[1];
   if (code) {

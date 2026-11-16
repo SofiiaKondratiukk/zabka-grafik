@@ -24,7 +24,7 @@ function cfg(locId) {
   };
 }
 /** Для /api/me: які локації мають звіт (назва вкладки). */
-function menuFor(locIds) { const out = {}; for (const id of locIds) { const c = cfg(id); if (c.url) out[id] = c.title; } return out; }
+function menuFor(locIds) { const out = {}; for (const id of locIds) { const c = cfg(id); if (c.url || get('SELECT 1 FROM przecena_items WHERE location_id=? AND active=1 LIMIT 1', id) || get('SELECT 1 FROM przecena_imports WHERE location_id=? LIMIT 1', id)) out[id] = c.title; } return out; }
 
 /** Щодня: завдання «пшецена» на вибрану зміну (сповіщення приходить на початку зміни). */
 function daily() {

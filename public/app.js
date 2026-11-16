@@ -1306,12 +1306,24 @@ async function hookAdminCard(box) {
 
 // ---------------- ЗВІТ POWER BI У ПРОГРАМІ («Пшецена») ----------------
 async function pageReport(el) {
-  const r = await api('GET', `/api/report-embed?loc=${S.loc}`);
+  const [r, pz] = await Promise.all([api('GET', `/api/report-embed?loc=${S.loc}`), api('GET', `/api/przecena?loc=${S.loc}`)]);
   el.style.maxWidth = 'none';
-  if (!r.url) { el.innerHTML = `<h1>${t('nav_report')}</h1><div class="card mute">${t('report_none')}</div>`; return; }
-  el.innerHTML = `<div class="row" style="justify-content:space-between"><h1 style="margin-bottom:8px">🏷️ ${esc(r.title)} · ${esc(curLoc().name)}</h1><a href="${esc(r.url)}" target="_blank" rel="noopener" class="small">${t('report_open_new')} ↗</a></div>
-    <div class="rep-frame"><iframe src="${esc(r.url)}" allowfullscreen loading="lazy" title="${esc(r.title)}"></iframe></div>
-    <p class="small mute">${t('report_help_worker')}</p>`;
+  const admin = isOwner();
+  const newCount = pz.items.filter(i => i.is_new).length;
+  el.innerHTML = `<h1 style="margin-bottom:6px">🏷️ ${esc(r.title)} · ${esc(curLoc().name)}</h1>
+    <p class="small mute">${t('pz_help_worker')}${pz.last ? ` ${t('pz_updated', { at: lts(pz.last.at) })}` : ''}</p>
+    ${admin ? `<div class="card"><div class="row"><b class="grow">${t('pz_upload_title')}</b><label class="pri sm" style="cursor:pointer;padding:6px 12px;border-radius:8px;background:var(--acc);color:#fff">📤 ${t('pz_upload')}<input type="file" id="pzfile" accept=".xlsx,.csv" style="display:none"></label></div><p class="small mute">${t('pz_upload_help')}</p><div id="pzres"></div></div>` : ''}
+    ${pz.items.length ? `<div class="tbl-wrap"><table class="t"><thead><tr><th>${t('pz_name')}</th><th>${t('pz_index')}</th><th>${t('pz_group')}</th><th>${t('pz_qty')}</th><th>${t('pz_price')}</th></tr></thead><tbody>
+      ${pz.items.map(i => `<tr class="${i.is_new ? 'diff' : ''}"><td>${i.is_new ? '<span class="pill pending">' + t('pz_new') + '</span> ' : ''}${esc(i.opis || '')}</td><td>${esc(i.indeks)}</td><td class="small">${esc((i.grupa || '').replace(/^S_/, ''))}</td><td class="n">${i.qty ?? ''}</td><td class="n">${i.price != null ? i.price.toFixed(2).replace('.', ',') + ' zł' : ''}</td></tr>`).join('')}
+      </tbody></table></div><p class="small mute">${t('pz_total', { n: pz.items.length, fresh: newCount })}</p>` : `<div class="card mute">${t('pz_empty')}</div>`}
+    ${r.url ? `<h2>${t('pz_report')}</h2><div class="rep-frame"><iframe src="${esc(r.url)}" allowfullscreen loading="lazy" title="${esc(r.title)}"></iframe></div>` : ''}`;
+  if ($('#pzfile', el)) $('#pzfile', el).onchange = async e => {
+    const f = e.target.files[0]; if (!f) return;
+    const box = $('#pzres', el); box.innerHTML = '<div class="loading">…</div>';
+    const b64 = await new Promise((ok, bad) => { const rd = new FileReader(); rd.onload = () => ok(String(rd.result).split(',')[1]); rd.onerror = bad; rd.readAsDataURL(f); });
+    try { const res = await api('POST', '/api/przecena/import', { name: f.name, data: b64 }); box.innerHTML = `<div class="okbox" style="white-space:pre-line">${esc(res.text)}</div>`; await refreshMe(); setTimeout(() => pageReport(el), 2500); }
+    catch (er) { box.innerHTML = errBox(er); }
+  };
 }
 async function reportAdminCard(box) {
   const r = await api('GET', `/api/report-embed?loc=${S.loc}`);

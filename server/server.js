@@ -663,7 +663,8 @@ require('./tasks').register(app, { wrap, needAdmin, needMember, bad, forbid }); 
 require('./telegram').register(app, { wrap, bad, forbid, L }); // Telegram-бот: webhook, токен, тест
 require('./vacations').register(app, { wrap, needMember, bad, forbid }); // урлопи
 require('./hooks').register(app, { wrap, bad, forbid });
-require('./reportembed').register(app, { wrap, needMember, bad, forbid }); // звіт Power BI у програмі (вкладка «Пшецена»)
+require('./reportembed').register(app, { wrap, needMember, bad, forbid });
+require('./przecena').register(app, { wrap, needMember, bad, forbid }); // пшецена: список товарів з файлу, завдання для нових // звіт Power BI у програмі (вкладка «Пшецена»)
  // вхідні сигнали (Power BI → завдання) // премії, штрафи, мінуси, аванси
 
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, '..', 'public', 'index.html')));
