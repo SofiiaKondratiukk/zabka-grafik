@@ -88,7 +88,7 @@ function navHtml(page) {
   const items = [['home', t('nav_home')], ['schedule', t('nav_schedule')], ['avail', t('nav_avail')], ['vacation', t('nav_vacation')], ['hours', t('nav_hours')], ['requests', t('nav_requests')], ['notes', t('nav_notes')]];
   if (isAdmin()) items.push(['scheduleall', t('nav_schedule_all')], ['tasks', t('nav_tasks')], ['disposition', t('nav_disposition')], ['shiftcards', t('nav_shiftcards')], ['warnings', t('nav_warnings')], ['reports', t('nav_reports')], ['workers', t('nav_workers')], ['months', t('nav_months')], ['audit', t('nav_audit')]);
   if (isOwner()) items.push(['locations', t('nav_locations')]);
-  if (S.me.reports && S.me.reports[S.loc]) items.splice(1, 0, ['report', '🧾 ' + esc(S.me.reports[S.loc])]);
+  if (S.me.reports && S.me.reports[S.loc]) items.splice(1, 0, ['report', '🏷️ ' + esc(S.me.reports[S.loc])]);
   items.push(['settings', t('nav_settings')]);
   return items.map(([k, l]) => `<a href="#/${k}" class="${k === page ? 'on' : ''}">${l}</a>`).join('');
 }
@@ -1304,18 +1304,18 @@ async function hookAdminCard(box) {
   };
 }
 
-// ---------------- ЗВІТ POWER BI У ПРОГРАМІ («Прострочка») ----------------
+// ---------------- ЗВІТ POWER BI У ПРОГРАМІ («Пшецена») ----------------
 async function pageReport(el) {
   const r = await api('GET', `/api/report-embed?loc=${S.loc}`);
   el.style.maxWidth = 'none';
   if (!r.url) { el.innerHTML = `<h1>${t('nav_report')}</h1><div class="card mute">${t('report_none')}</div>`; return; }
-  el.innerHTML = `<div class="row" style="justify-content:space-between"><h1 style="margin-bottom:8px">🧾 ${esc(r.title)} · ${esc(curLoc().name)}</h1><a href="${esc(r.url)}" target="_blank" rel="noopener" class="small">${t('report_open_new')} ↗</a></div>
+  el.innerHTML = `<div class="row" style="justify-content:space-between"><h1 style="margin-bottom:8px">🏷️ ${esc(r.title)} · ${esc(curLoc().name)}</h1><a href="${esc(r.url)}" target="_blank" rel="noopener" class="small">${t('report_open_new')} ↗</a></div>
     <div class="rep-frame"><iframe src="${esc(r.url)}" allowfullscreen loading="lazy" title="${esc(r.title)}"></iframe></div>
     <p class="small mute">${t('report_help_worker')}</p>`;
 }
 async function reportAdminCard(box) {
   const r = await api('GET', `/api/report-embed?loc=${S.loc}`);
-  box.innerHTML = `<h2 style="margin-top:0">🧾 ${t('report_admin_title', { loc: esc(curLoc().name) })}</h2><p class="small mute">${t('report_admin_help')}</p>
+  box.innerHTML = `<h2 style="margin-top:0">🏷️ ${t('report_admin_title', { loc: esc(curLoc().name) })}</h2><p class="small mute">${t('report_admin_help')}</p>
     <label class="f"><span>${t('report_url')}</span><input id="rpurl" value="${esc(r.url)}" placeholder="https://app.powerbi.com/view?r=..." style="width:100%"></label>
     <div class="row"><label class="f grow"><span>${t('report_tab_name')}</span><input id="rptitle" value="${esc(r.title)}"></label>
       <label class="f grow"><span>${t('report_daily_slot')}</span><select id="rpslot">${['s1', 's2', 'rs', 'dl'].map(sl => `<option value="${sl}" ${r.slot === sl ? 'selected' : ''}>${slotName(sl)}</option>`).join('')}</select></label></div>
