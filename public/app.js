@@ -1319,6 +1319,7 @@ async function reportAdminCard(box) {
     <label class="f"><span>${t('report_url')}</span><input id="rpurl" value="${esc(r.url)}" placeholder="https://app.powerbi.com/view?r=..." style="width:100%"></label>
     <div class="row"><label class="f grow"><span>${t('report_tab_name')}</span><input id="rptitle" value="${esc(r.title)}"></label>
       <label class="f grow"><span>${t('report_daily_slot')}</span><select id="rpslot">${['s1', 's2', 'rs', 'dl'].map(sl => `<option value="${sl}" ${r.slot === sl ? 'selected' : ''}>${slotName(sl)}</option>`).join('')}</select></label></div>
+    <div class="okbox small">🔔 ${t('report_on_signal')}</div>
     <label class="f"><input type="checkbox" id="rpdaily" ${r.daily ? 'checked' : ''}> ${t('report_daily')}</label>
     <label class="f"><span>${t('report_task_text')}</span><input id="rptext" value="${esc(r.text)}" style="width:100%"></label>
     <div id="rperr"></div><div class="row"><button class="pri sm" id="rpsave">${t('save')}</button>${r.url ? `<a class="sm" href="#/report">${t('report_preview')} →</a>` : ''}</div>`;

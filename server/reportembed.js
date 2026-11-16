@@ -11,6 +11,8 @@ const tasks = require('./tasks');
 const keyOf = (locId, k) => `rep_${k}_${locId}`;
 // уточнення: це не прострочка, а товари на пшецену — оновлюємо раніше збережені назви
 run("UPDATE settings SET value='Пшецена' WHERE key LIKE 'rep_title_%' AND value='Прострочка'");
+// завдання «Пшецена» — лише коли Power BI надсилає сигнал про нові товари, а не щодня
+if (!setting('mig_rep_daily_off')) { run("UPDATE settings SET value='0' WHERE key LIKE 'rep_daily_%'"); setting('mig_rep_daily_off', 1); }
 run("UPDATE settings SET value=? WHERE key LIKE 'rep_text_%' AND value LIKE '🧾 Перевірити прострочку%'", "🏷️ Пшецена: відкрийте вкладку «Пшецена», знайдіть товари з коротким терміном придатності й поставте на них пшецену (наклейки зі знижкою), потім позначте «Виконано».");
 function cfg(locId) {
   return {
@@ -65,4 +67,4 @@ function register(app, h) {
   }));
   setInterval(daily, 10 * 60 * 1000); setTimeout(daily, 10000);
 }
-module.exports = { register, menuFor };
+module.exports = { register, menuFor, cfgFor: cfg };

@@ -25,7 +25,8 @@ function resolveLocations(v) {
   const want = v == null || v === '' ? cfg().loc : v;
   if (String(want).toLowerCase() === 'all' || want === '*') return locs;
   const s = String(want).trim().toLowerCase();
-  return locs.filter(l => String(l.id) === s || l.name.toLowerCase().includes(s));
+  if (/^\d+$/.test(s)) return locs.filter(l => String(l.id) === s); // номер локації — лише за id
+  return locs.filter(l => l.name.toLowerCase().includes(s));
 }
 
 /** Створює завдання з вхідного сигналу. Повертає {created:[...], skipped:[...]} */
@@ -33,9 +34,9 @@ function handle(body, query) {
   const c = cfg();
   const p = typeof body === 'string' ? { text: body } : { ...(body || {}) };
   for (const k of ['text', 'location', 'slot', 'date', 'due']) if (p[k] == null && query[k] != null) p[k] = query[k];
-  let text = String(p.text || p.title || p.message || p.Message || p.Title || '').trim();
-  if (!text) throw Object.assign(new Error('text is required'), { status: 400 });
-  text = (c.prefix || '') + text.slice(0, 480);
+  let given = String(p.text || p.title || p.message || p.Message || p.Title || '').trim();
+  // без тексту — береться текст завдання зі звіту локації (напр. «🏷️ Пшецена…»)
+  const textFor = l => given ? (c.prefix || '') + given.slice(0, 480) : (require('./reportembed').cfgFor(l.id).url ? require('./reportembed').cfgFor(l.id).text : '');
   const locs = resolveLocations(p.location);
   if (!locs.length) throw Object.assign(new Error('location not found'), { status: 400 });
   const now = L.warsawNow();
@@ -44,13 +45,18 @@ function handle(body, query) {
   const due = p.due ? L.parseHM(p.due) : null;
   const created = [], skipped = [];
   for (const l of locs) {
-    if (slot === 'rs' && !l.has_restock) { skipped.push(`${l.name}: немає докладки`); continue; }
+    const text = textFor(l);
+    if (!text) { skipped.push(`${l.name}: немає тексту і не налаштовано звіт`); continue; }
+    // для завдання зі звіту (без тексту в сигналі) — зміна з налаштувань звіту
+    const sl = (!given && !['s1', 's2', 'rs', 'dl'].includes(p.slot)) ? require('./reportembed').cfgFor(l.id).slot : slot;
+    if (sl === 'rs' && !l.has_restock) { skipped.push(`${l.name}: немає докладки`); continue; }
     const dup = get("SELECT id FROM tasks WHERE deleted=0 AND location_id=? AND date=? AND text=? AND created_at >= datetime('now','-12 hours')", l.id, date, text);
     if (dup) { skipped.push(`${l.name}: уже є (#${dup.id})`); continue; }
-    const id = tasks.createSystemTask({ location_id: l.id, date, target: slot ? 'slot' : 'all', slot, text, due: due != null && !isNaN(due) ? due : null });
+    const id = tasks.createSystemTask({ location_id: l.id, date, target: sl ? 'slot' : 'all', slot: sl, text, due: due != null && !isNaN(due) ? due : null });
     created.push(`${l.name} #${id}`);
     notifyAdmins(l.id, `📊 Power BI → завдання (${date}): ${text}`, 'task');
   }
+  if (!created.length && !skipped.length) throw Object.assign(new Error('text is required'), { status: 400 });
   return { created, skipped, date };
 }
 
