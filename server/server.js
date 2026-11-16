@@ -660,7 +660,8 @@ require('./money').register(app, { wrap, needAdmin, needMember, bad });
 const avail = require('./avail'); avail.register(app, { wrap, needAdmin, needMember, bad, forbid }); // диспозиція
 require('./tasks').register(app, { wrap, needAdmin, needMember, bad, forbid }); // завдання від адміністратора
 require('./telegram').register(app, { wrap, bad, forbid, L }); // Telegram-бот: webhook, токен, тест
-require('./vacations').register(app, { wrap, needMember, bad, forbid }); // урлопи // премії, штрафи, мінуси, аванси
+require('./vacations').register(app, { wrap, needMember, bad, forbid }); // урлопи
+require('./hooks').register(app, { wrap, bad, forbid }); // вхідні сигнали (Power BI → завдання) // премії, штрафи, мінуси, аванси
 
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, '..', 'public', 'index.html')));
 

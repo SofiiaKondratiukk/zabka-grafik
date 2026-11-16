@@ -562,7 +562,7 @@ async function pageSettings(el) {
   const cats = ['schedule', 'shift', 'decision', 'money', 'avail', 'task', 'note', 'request', 'reminder'];
   el.innerHTML = `<h1>${t('nav_settings')}</h1>
     <div class="card"><h2 style="margin-top:0">${t('language')}</h2>${langSeg()}</div>
-    ${isOwner() ? '<div class="card" id="tgadmin"><div class="loading">…</div></div>' : ''}
+    ${isOwner() ? '<div class="card" id="tgadmin"><div class="loading">…</div></div><div class="card" id="hookadmin"><div class="loading">…</div></div>' : ''}
     <div class="card"><h2 style="margin-top:0">Telegram</h2>${u.tg_linked ? `<p>✓ ${t('tg_linked')}</p><button id="tgun">${t('tg_unlink')}</button>` : `<p class="mute">${t('tg_help')}</p><button class="pri" id="tgl">${t('tg_link')}</button><div id="tgout"></div>`}
       <h2>${t('notif_settings')}</h2>${cats.map(c => `<label class="f"><input type="checkbox" class="nc" value="${c}" ${u.notify[c] === false ? '' : 'checked'}> ${t('ncat_' + c)}</label>`).join('')}
       ${isOwner() ? `<h2>${t('notif_locations')}</h2><p class="small mute">${t('notif_locations_help')}</p>${S.me.locations.map(l => { const home = l.admin_id === u.id || l.deputy_id === u.id; return `<label class="f"><input type="checkbox" class="nl" value="${l.id}" ${home ? 'checked disabled' : ((u.notify.locs || []).includes(l.id) ? 'checked' : '')}> ${esc(l.name)}${home ? ` <span class="small mute">(${t('notif_home_loc')})</span>` : ''}</label>`; }).join('')}` : ''}</div>
@@ -577,6 +577,7 @@ async function pageSettings(el) {
     let n = 0; const iv = setInterval(async () => { n++; const me = await api('GET', '/api/me'); if (me.user.tg_linked || n > 60) { clearInterval(iv); if (me.user.tg_linked) { S.me = me; toast(t('tg_linked')); if (location.hash.includes('settings')) pageSettings(el); } } }, 3000);
   };
   if ($('#tgadmin', el)) tgAdminCard($('#tgadmin', el));
+  if ($('#hookadmin', el)) hookAdminCard($('#hookadmin', el));
   if ($('#tgun', el)) $('#tgun', el).onclick = async () => { await api('POST', '/api/me/tg-unlink'); await refreshMe(); pageSettings(el); };
   const saveNotify = async () => { const o = {}; $$('.nc', el).forEach(x => { if (!x.checked) o[x.value] = false; }); if ($$('.nl', el).length) o.locs = $$('.nl', el).filter(x => x.checked && !x.disabled).map(x => Number(x.value)); await api('POST', '/api/me/notify', o); await refreshMe(); toast(t('saved')); };
   $$('.nc, .nl', el).forEach(cb => cb.onchange = saveNotify);
@@ -1276,6 +1277,29 @@ async function pageScheduleMobile(el, mode) {
     else { render(results.join('')); $('#mob-msg', el).scrollIntoView({ behavior: 'smooth' }); }
   };
   render();
+}
+
+// ---------------- POWER BI → ЗАВДАННЯ (адміністратор) ----------------
+async function hookAdminCard(box) {
+  const h = await api('GET', '/api/hooks/settings');
+  box.innerHTML = `<h2 style="margin-top:0">📊 ${t('hook_title')}</h2><p class="small mute">${t('hook_help')}</p>
+    <label class="f"><input type="checkbox" id="hken" ${h.enabled ? 'checked' : ''}> ${t('hook_enabled')}</label>
+    <label class="f"><span>${t('hook_url')}</span><div class="row" style="flex-wrap:nowrap"><input id="hkurl" readonly value="${esc(h.url)}" style="flex:1;font-size:12px"><button class="sm" id="hkcopy">📋 ${t('hook_copy')}</button></div></label>
+    <p class="small red">${t('hook_secret_warn')}</p>
+    <div class="row"><label class="f grow"><span>${t('hook_default_loc')}</span><select id="hkloc"><option value="all" ${h.loc === 'all' ? 'selected' : ''}>${t('all_locations')}</option>${S.me.locations.map(l => `<option value="${l.id}" ${String(l.id) === h.loc ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select></label>
+      <label class="f grow"><span>${t('hook_default_target')}</span><select id="hktg"><option value="all" ${h.target === 'all' ? 'selected' : ''}>${t('tk_all')}</option>${['s1', 's2', 'rs', 'dl'].map(sl => `<option value="${sl}" ${h.target === sl ? 'selected' : ''}>${slotName(sl)}</option>`).join('')}</select></label></div>
+    <div class="row"><button class="pri sm" id="hksave">${t('save')}</button><button class="sm" id="hktest">🧪 ${t('hook_test')}</button><button class="sm danger" id="hkregen">↻ ${t('hook_regen')}</button></div><div id="hkres"></div>
+    <h3 style="font-size:15px;margin:14px 0 6px">${t('hook_log')}</h3>${h.log.length ? `<div class="small">${h.log.map(x => `<div>${x.ok ? '✅' : '❌'} ${lts(x.at)} — ${esc(x.info)}</div>`).join('')}</div>` : `<p class="small mute">${t('hook_log_empty')}</p>`}`;
+  const res = $('#hkres', box);
+  $('#hkcopy', box).onclick = async () => { try { await navigator.clipboard.writeText(h.url); toast(t('hook_copied')); } catch (_) { $('#hkurl', box).select(); } };
+  $('#hksave', box).onclick = async () => { await api('PUT', '/api/hooks/settings', { enabled: $('#hken', box).checked, loc: $('#hkloc', box).value, target: $('#hktg', box).value }); toast(t('saved')); hookAdminCard(box); };
+  $('#hkregen', box).onclick = async () => { if (!confirm(t('hook_regen_q'))) return; await api('POST', '/api/hooks/regenerate'); hookAdminCard(box); };
+  $('#hktest', box).onclick = async () => {
+    const r = await fetch(h.url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: t('hook_test_text') }) });
+    const j = await r.json().catch(() => ({}));
+    res.innerHTML = j.ok ? `<div class="okbox">✅ ${t('hook_test_ok', { list: (j.created || []).join(', ') || (j.skipped || []).join(', ') })}</div>` : `<div class="warnbox">${esc(j.error || r.status)}</div>`;
+    setTimeout(() => hookAdminCard(box), 1500);
+  };
 }
 
 window.closeModal = closeModal;

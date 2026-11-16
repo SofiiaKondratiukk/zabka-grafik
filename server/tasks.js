@@ -162,4 +162,13 @@ function register(app, h) {
   setInterval(dispatch, 5 * 60 * 1000); setTimeout(dispatch, 8000);
 }
 
-module.exports = { register, recipients, dispatch };
+/** Завдання від зовнішнього сигналу (напр. Power BI): без автора-людини, із записом в історії. */
+function createSystemTask({ location_id, date, target, slot, user_id, text, due }) {
+  const r = run('INSERT INTO tasks(location_id,date,target,slot,user_id,text,due,created_by) VALUES(?,?,?,?,?,?,?,NULL)', location_id, date, target, slot || null, user_id || null, text, due ?? null);
+  const id = Number(r.lastInsertRowid);
+  L.audit(null, location_id, 'task_create', { id, date, text, source: 'Power BI / webhook' });
+  dispatch();
+  return id;
+}
+
+module.exports = { register, recipients, dispatch, createSystemTask };
