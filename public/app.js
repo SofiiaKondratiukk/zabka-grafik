@@ -79,7 +79,7 @@ function renderPick() {
 async function logout() { await api('POST', '/api/logout'); S.me = null; sessionStorage.clear(); renderLogin(); }
 
 const PAGES = {
-  home: { fn: pageHome }, schedule: { fn: pageSchedule }, scheduleall: { fn: pageScheduleAll }, avail: { fn: pageMyAvail }, vacation: { fn: pageVacation }, disposition: { fn: pageDisposition, admin: true }, tasks: { fn: pageTasks, admin: true }, hours: { fn: pageHours }, requests: { fn: pageRequests }, notes: { fn: pageNotes },
+  home: { fn: pageHome }, schedule: { fn: pageSchedule }, report: { fn: pageReport }, scheduleall: { fn: pageScheduleAll }, avail: { fn: pageMyAvail }, vacation: { fn: pageVacation }, disposition: { fn: pageDisposition, admin: true }, tasks: { fn: pageTasks, admin: true }, hours: { fn: pageHours }, requests: { fn: pageRequests }, notes: { fn: pageNotes },
   warnings: { fn: pageWarnings, admin: true }, shiftcards: { fn: pageShiftCards, admin: true }, reports: { fn: pageReports, admin: true }, workers: { fn: pageWorkers, admin: true },
   locations: { fn: pageLocations, owner: true }, months: { fn: pageMonths, admin: true }, audit: { fn: pageAudit, admin: true },
   settings: { fn: pageSettings }, notifications: { fn: pageNotifications },
@@ -88,6 +88,7 @@ function navHtml(page) {
   const items = [['home', t('nav_home')], ['schedule', t('nav_schedule')], ['avail', t('nav_avail')], ['vacation', t('nav_vacation')], ['hours', t('nav_hours')], ['requests', t('nav_requests')], ['notes', t('nav_notes')]];
   if (isAdmin()) items.push(['scheduleall', t('nav_schedule_all')], ['tasks', t('nav_tasks')], ['disposition', t('nav_disposition')], ['shiftcards', t('nav_shiftcards')], ['warnings', t('nav_warnings')], ['reports', t('nav_reports')], ['workers', t('nav_workers')], ['months', t('nav_months')], ['audit', t('nav_audit')]);
   if (isOwner()) items.push(['locations', t('nav_locations')]);
+  if (S.me.reports && S.me.reports[S.loc]) items.splice(1, 0, ['report', '🧾 ' + esc(S.me.reports[S.loc])]);
   items.push(['settings', t('nav_settings')]);
   return items.map(([k, l]) => `<a href="#/${k}" class="${k === page ? 'on' : ''}">${l}</a>`).join('');
 }
@@ -562,7 +563,7 @@ async function pageSettings(el) {
   const cats = ['schedule', 'shift', 'decision', 'money', 'avail', 'task', 'note', 'request', 'reminder'];
   el.innerHTML = `<h1>${t('nav_settings')}</h1>
     <div class="card"><h2 style="margin-top:0">${t('language')}</h2>${langSeg()}</div>
-    ${isOwner() ? '<div class="card" id="tgadmin"><div class="loading">…</div></div><div class="card" id="hookadmin"><div class="loading">…</div></div>' : ''}
+    ${isOwner() ? '<div class="card" id="tgadmin"><div class="loading">…</div></div><div class="card" id="reportadmin"><div class="loading">…</div></div><div class="card" id="hookadmin"><div class="loading">…</div></div>' : ''}
     <div class="card"><h2 style="margin-top:0">Telegram</h2>${u.tg_linked ? `<p>✓ ${t('tg_linked')}</p><button id="tgun">${t('tg_unlink')}</button>` : `<p class="mute">${t('tg_help')}</p><button class="pri" id="tgl">${t('tg_link')}</button><div id="tgout"></div>`}
       <h2>${t('notif_settings')}</h2>${cats.map(c => `<label class="f"><input type="checkbox" class="nc" value="${c}" ${u.notify[c] === false ? '' : 'checked'}> ${t('ncat_' + c)}</label>`).join('')}
       ${isOwner() ? `<h2>${t('notif_locations')}</h2><p class="small mute">${t('notif_locations_help')}</p>${S.me.locations.map(l => { const home = l.admin_id === u.id || l.deputy_id === u.id; return `<label class="f"><input type="checkbox" class="nl" value="${l.id}" ${home ? 'checked disabled' : ((u.notify.locs || []).includes(l.id) ? 'checked' : '')}> ${esc(l.name)}${home ? ` <span class="small mute">(${t('notif_home_loc')})</span>` : ''}</label>`; }).join('')}` : ''}</div>
@@ -578,6 +579,7 @@ async function pageSettings(el) {
   };
   if ($('#tgadmin', el)) tgAdminCard($('#tgadmin', el));
   if ($('#hookadmin', el)) hookAdminCard($('#hookadmin', el));
+  if ($('#reportadmin', el)) reportAdminCard($('#reportadmin', el));
   if ($('#tgun', el)) $('#tgun', el).onclick = async () => { await api('POST', '/api/me/tg-unlink'); await refreshMe(); pageSettings(el); };
   const saveNotify = async () => { const o = {}; $$('.nc', el).forEach(x => { if (!x.checked) o[x.value] = false; }); if ($$('.nl', el).length) o.locs = $$('.nl', el).filter(x => x.checked && !x.disabled).map(x => Number(x.value)); await api('POST', '/api/me/notify', o); await refreshMe(); toast(t('saved')); };
   $$('.nc, .nl', el).forEach(cb => cb.onchange = saveNotify);
@@ -1299,6 +1301,30 @@ async function hookAdminCard(box) {
     const j = await r.json().catch(() => ({}));
     res.innerHTML = j.ok ? `<div class="okbox">✅ ${j.test ? t('hook_test_ok_dry') : t('hook_test_ok', { list: (j.created || []).join(', ') || (j.skipped || []).join(', ') })}</div>` : `<div class="warnbox">${esc(j.error || r.status)}</div>`;
     setTimeout(() => hookAdminCard(box), 1500);
+  };
+}
+
+// ---------------- ЗВІТ POWER BI У ПРОГРАМІ («Прострочка») ----------------
+async function pageReport(el) {
+  const r = await api('GET', `/api/report-embed?loc=${S.loc}`);
+  el.style.maxWidth = 'none';
+  if (!r.url) { el.innerHTML = `<h1>${t('nav_report')}</h1><div class="card mute">${t('report_none')}</div>`; return; }
+  el.innerHTML = `<div class="row" style="justify-content:space-between"><h1 style="margin-bottom:8px">🧾 ${esc(r.title)} · ${esc(curLoc().name)}</h1><a href="${esc(r.url)}" target="_blank" rel="noopener" class="small">${t('report_open_new')} ↗</a></div>
+    <div class="rep-frame"><iframe src="${esc(r.url)}" allowfullscreen loading="lazy" title="${esc(r.title)}"></iframe></div>
+    <p class="small mute">${t('report_help_worker')}</p>`;
+}
+async function reportAdminCard(box) {
+  const r = await api('GET', `/api/report-embed?loc=${S.loc}`);
+  box.innerHTML = `<h2 style="margin-top:0">🧾 ${t('report_admin_title', { loc: esc(curLoc().name) })}</h2><p class="small mute">${t('report_admin_help')}</p>
+    <label class="f"><span>${t('report_url')}</span><input id="rpurl" value="${esc(r.url)}" placeholder="https://app.powerbi.com/view?r=..." style="width:100%"></label>
+    <div class="row"><label class="f grow"><span>${t('report_tab_name')}</span><input id="rptitle" value="${esc(r.title)}"></label>
+      <label class="f grow"><span>${t('report_daily_slot')}</span><select id="rpslot">${['s1', 's2', 'rs', 'dl'].map(sl => `<option value="${sl}" ${r.slot === sl ? 'selected' : ''}>${slotName(sl)}</option>`).join('')}</select></label></div>
+    <label class="f"><input type="checkbox" id="rpdaily" ${r.daily ? 'checked' : ''}> ${t('report_daily')}</label>
+    <label class="f"><span>${t('report_task_text')}</span><input id="rptext" value="${esc(r.text)}" style="width:100%"></label>
+    <div id="rperr"></div><div class="row"><button class="pri sm" id="rpsave">${t('save')}</button>${r.url ? `<a class="sm" href="#/report">${t('report_preview')} →</a>` : ''}</div>`;
+  $('#rpsave', box).onclick = async () => {
+    try { await api('PUT', '/api/report-embed', { location_id: S.loc, url: $('#rpurl', box).value, title: $('#rptitle', box).value, slot: $('#rpslot', box).value, daily: $('#rpdaily', box).checked, text: $('#rptext', box).value }); toast(t('saved')); await refreshMe(); route(); }
+    catch (e) { $('#rperr', box).innerHTML = errBox(e); }
   };
 }
 
