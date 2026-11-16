@@ -101,12 +101,13 @@ async function importFile(buffer, filename, user, source) {
   return { text, results };
 }
 
-/** Щоденне нагадування адміністратору в Telegram: «перевірте звіт і надішліть файл» (якщо сьогодні файл ще не надсилали). */
-const remindCfg = () => ({ on: setting('pz_remind_on') !== '0', time: setting('pz_remind_time') || '07:00' });
+/** Нагадування адміністратору в Telegram раз на тиждень (типово понеділок 12:00): «перевірте звіт і надішліть файл». */
+if (!setting('mig_pz_weekly')) { setting('pz_remind_dow', 0); setting('pz_remind_time', '12:00'); setting('mig_pz_weekly', 1); }
+const remindCfg = () => ({ on: setting('pz_remind_on') !== '0', dow: Number(setting('pz_remind_dow') ?? 0), time: setting('pz_remind_time') || '12:00' });
 function remind() {
   const c = remindCfg(); if (!c.on) return;
   const now = L.warsawNow();
-  if (now.min < L.parseHM(c.time) || setting('pz_remind_last') === now.date) return;
+  if (L.dow(now.date) !== c.dow || now.min < L.parseHM(c.time) || setting('pz_remind_last') === now.date) return;
   setting('pz_remind_last', now.date);
   for (const l of all('SELECT DISTINCT location_id id FROM przecena_imports')) {
     const loc = get('SELECT * FROM locations WHERE id=? AND active=1', l.id); if (!loc) continue;
@@ -125,7 +126,8 @@ function register(app, h) {
   app.put('/api/przecena/remind', wrap(req => {
     if (!L.isAdminUser(req.user)) forbid();
     const tm = L.parseHM(req.body.time); if (tm == null || isNaN(tm)) bad(req.t('err_time_format'));
-    setting('pz_remind_on', req.body.on ? '1' : '0'); setting('pz_remind_time', L.hm(tm));
+    const dw = Number(req.body.dow); if (!(dw >= 0 && dw <= 6)) bad(req.t('err_required'));
+    setting('pz_remind_on', req.body.on ? '1' : '0'); setting('pz_remind_time', L.hm(tm)); setting('pz_remind_dow', dw);
     L.audit(req.user, null, 'przecena_remind', remindCfg());
     return remindCfg();
   }));

@@ -1319,8 +1319,8 @@ async function pageReport(el) {
     ${r.url ? `<h2>${t('pz_report')}</h2><div class="rep-frame"><iframe src="${esc(r.url)}" allowfullscreen loading="lazy" title="${esc(r.title)}"></iframe></div>` : ''}`;
   if ($('#pzrem', el)) {
     const rc = await api('GET', '/api/przecena/remind');
-    $('#pzrem', el).innerHTML = `<label><input type="checkbox" id="pzron" ${rc.on ? 'checked' : ''}> ${t('pz_remind')}</label><input type="time" id="pzrt" value="${rc.time}"><button class="sm" id="pzrs">${t('save')}</button>`;
-    $('#pzrs', el).onclick = async () => { await api('PUT', '/api/przecena/remind', { on: $('#pzron', el).checked, time: $('#pzrt', el).value }); toast(t('saved')); };
+    $('#pzrem', el).innerHTML = `<label><input type="checkbox" id="pzron" ${rc.on ? 'checked' : ''}> ${t('pz_remind')}</label><select id="pzrd">${[0, 1, 2, 3, 4, 5, 6].map(i => `<option value="${i}" ${rc.dow === i ? 'selected' : ''}>${t('dow_full_' + i)}</option>`).join('')}</select><input type="time" id="pzrt" value="${rc.time}"><button class="sm" id="pzrs">${t('save')}</button>`;
+    $('#pzrs', el).onclick = async () => { await api('PUT', '/api/przecena/remind', { on: $('#pzron', el).checked, dow: Number($('#pzrd', el).value), time: $('#pzrt', el).value }); toast(t('saved')); };
   }
   if ($('#pzfile', el)) $('#pzfile', el).onchange = async e => {
     const f = e.target.files[0]; if (!f) return;
