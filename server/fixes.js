@@ -35,7 +35,21 @@ function fixAndrii(h) {
   return `обліковий запис «${target.name}» → логін andrii2`;
 }
 
+function fixHook() {
+  const crypto = require('crypto');
+  const r = run("UPDATE tasks SET deleted=1 WHERE deleted=0 AND (text LIKE '📊 Тест: перевірити%' OR text LIKE '📊 Test: sprawdzić%')");
+  const nadw = all("SELECT id FROM locations WHERE name LIKE 'Nadwi%' ORDER BY id LIMIT 1")[0];
+  if (nadw) setting('hook_loc', String(nadw.id));
+  setting('hook_key', crypto.randomBytes(18).toString('hex'));
+  L.audit(null, null, 'hook_settings', { test_tasks_removed: Number(r.changes), loc: nadw ? 'Nadwiślańska 11' : '—', key: 'regenerated' });
+  return `тестових завдань прибрано: ${r.changes}; локація: ${nadw ? 'Nadwiślańska' : '—'}; новий ключ`;
+}
+
 function run_(h) {
+  if (!setting('fix_hook_v1')) {
+    setting('fix_hook_v1', 1);
+    try { console.log('fix hook: ' + fixHook()); } catch (e) { console.error('fix hook failed', e.message); }
+  }
   if (!setting('fix_andrii2_v2')) {
     setting('fix_andrii2_v2', 1);
     try { console.log('fix: ' + fixAndrii(h)); } catch (e) { console.error('fix andrii2 failed', e.message); }

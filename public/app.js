@@ -1295,9 +1295,9 @@ async function hookAdminCard(box) {
   $('#hksave', box).onclick = async () => { await api('PUT', '/api/hooks/settings', { enabled: $('#hken', box).checked, loc: $('#hkloc', box).value, target: $('#hktg', box).value }); toast(t('saved')); hookAdminCard(box); };
   $('#hkregen', box).onclick = async () => { if (!confirm(t('hook_regen_q'))) return; await api('POST', '/api/hooks/regenerate'); hookAdminCard(box); };
   $('#hktest', box).onclick = async () => {
-    const r = await fetch(h.url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: t('hook_test_text') }) });
+    const r = await fetch(h.url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: t('hook_test_text'), test: true }) });
     const j = await r.json().catch(() => ({}));
-    res.innerHTML = j.ok ? `<div class="okbox">✅ ${t('hook_test_ok', { list: (j.created || []).join(', ') || (j.skipped || []).join(', ') })}</div>` : `<div class="warnbox">${esc(j.error || r.status)}</div>`;
+    res.innerHTML = j.ok ? `<div class="okbox">✅ ${j.test ? t('hook_test_ok_dry') : t('hook_test_ok', { list: (j.created || []).join(', ') || (j.skipped || []).join(', ') })}</div>` : `<div class="warnbox">${esc(j.error || r.status)}</div>`;
     setTimeout(() => hookAdminCard(box), 1500);
   };
 }

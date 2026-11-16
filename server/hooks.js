@@ -62,6 +62,7 @@ function register(app, h) {
       const k = req.headers['x-hook-key'] || req.query.key;
       if (!safeEq(k, key())) { log(false, 'неправильний ключ'); return res.status(403).json({ ok: false, error: 'bad key' }); }
       if (!c.enabled) { log(false, 'вимкнено в налаштуваннях'); return res.status(423).json({ ok: false, error: 'disabled' }); }
+      if ((req.body && req.body.test === true) || req.query.test === '1') { log(true, 'тестовий сигнал — зв\'язок працює (завдання не створено)'); return res.json({ ok: true, test: true, created: [], skipped: [] }); }
       const r = handle(req.body, req.query);
       log(true, `створено: ${r.created.join(', ') || '—'}${r.skipped.length ? '; пропущено: ' + r.skipped.join(', ') : ''}`);
       res.json({ ok: true, ...r });
