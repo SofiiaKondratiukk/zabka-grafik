@@ -7,7 +7,7 @@
 const ExcelJS = require('exceljs');
 const { db, all, get, run, setting, tx } = require('./db');
 const L = require('./logic');
-const { notifyAdmins } = require('./notify');
+const { notifyAdmins, notify } = require('./notify');
 const tasks = require('./tasks');
 
 db.exec(`
@@ -101,8 +101,34 @@ async function importFile(buffer, filename, user, source) {
   return { text, results };
 }
 
+/** Щоденне нагадування адміністратору в Telegram: «перевірте звіт і надішліть файл» (якщо сьогодні файл ще не надсилали). */
+const remindCfg = () => ({ on: setting('pz_remind_on') !== '0', time: setting('pz_remind_time') || '07:00' });
+function remind() {
+  const c = remindCfg(); if (!c.on) return;
+  const now = L.warsawNow();
+  if (now.min < L.parseHM(c.time) || setting('pz_remind_last') === now.date) return;
+  setting('pz_remind_last', now.date);
+  for (const l of all('SELECT DISTINCT location_id id FROM przecena_imports')) {
+    const loc = get('SELECT * FROM locations WHERE id=? AND active=1', l.id); if (!loc) continue;
+    const today = get("SELECT 1 FROM przecena_imports WHERE location_id=? AND date(at, '+1 hour') >= ?", l.id, now.date);
+    if (today) continue;
+    const ids = new Set([loc.admin_id, loc.deputy_id].filter(Boolean));
+    if (!ids.size) for (const a of all("SELECT id FROM users WHERE role IN ('admin','owner') AND active=1")) ids.add(a.id);
+    for (const id of ids) notify(id, `🏷️ ${loc.name}: перевірте звіт «Lista indeksów z niskim terminem ważności» і надішліть сюди файл (експорт .xlsx) — нові товари на пшецену отримають працівники.`, 'task');
+  }
+}
+
 function register(app, h) {
   const { wrap, needMember, bad, forbid } = h;
+  setInterval(remind, 5 * 60 * 1000); setTimeout(remind, 15000);
+  app.get('/api/przecena/remind', wrap(req => { if (!L.isAdminUser(req.user)) forbid(); return remindCfg(); }));
+  app.put('/api/przecena/remind', wrap(req => {
+    if (!L.isAdminUser(req.user)) forbid();
+    const tm = L.parseHM(req.body.time); if (tm == null || isNaN(tm)) bad(req.t('err_time_format'));
+    setting('pz_remind_on', req.body.on ? '1' : '0'); setting('pz_remind_time', L.hm(tm));
+    L.audit(req.user, null, 'przecena_remind', remindCfg());
+    return remindCfg();
+  }));
   app.get('/api/przecena', wrap(req => {
     const locId = Number(req.query.loc); needMember(req, locId);
     const last = get('SELECT p.*, u.name by_name FROM przecena_imports p LEFT JOIN users u ON u.id=p.by WHERE location_id=? ORDER BY id DESC LIMIT 1', locId);

@@ -1312,11 +1312,16 @@ async function pageReport(el) {
   const newCount = pz.items.filter(i => i.is_new).length;
   el.innerHTML = `<h1 style="margin-bottom:6px">🏷️ ${esc(r.title)} · ${esc(curLoc().name)}</h1>
     <p class="small mute">${t('pz_help_worker')}${pz.last ? ` ${t('pz_updated', { at: lts(pz.last.at) })}` : ''}</p>
-    ${admin ? `<div class="card"><div class="row"><b class="grow">${t('pz_upload_title')}</b><label class="pri sm" style="cursor:pointer;padding:6px 12px;border-radius:8px;background:var(--acc);color:#fff">📤 ${t('pz_upload')}<input type="file" id="pzfile" accept=".xlsx,.csv" style="display:none"></label></div><p class="small mute">${t('pz_upload_help')}</p><div id="pzres"></div></div>` : ''}
+    ${admin ? `<div class="card"><div class="row"><b class="grow">${t('pz_upload_title')}</b><label class="pri sm" style="cursor:pointer;padding:6px 12px;border-radius:8px;background:var(--acc);color:#fff">📤 ${t('pz_upload')}<input type="file" id="pzfile" accept=".xlsx,.csv" style="display:none"></label></div><p class="small mute">${t('pz_upload_help')}</p><div class="row small" id="pzrem"></div><div id="pzres"></div></div>` : ''}
     ${pz.items.length ? `<div class="tbl-wrap"><table class="t"><thead><tr><th>${t('pz_name')}</th><th>${t('pz_index')}</th><th>${t('pz_group')}</th><th>${t('pz_qty')}</th><th>${t('pz_price')}</th></tr></thead><tbody>
       ${pz.items.map(i => `<tr class="${i.is_new ? 'diff' : ''}"><td>${i.is_new ? '<span class="pill pending">' + t('pz_new') + '</span> ' : ''}${esc(i.opis || '')}</td><td>${esc(i.indeks)}</td><td class="small">${esc((i.grupa || '').replace(/^S_/, ''))}</td><td class="n">${i.qty ?? ''}</td><td class="n">${i.price != null ? i.price.toFixed(2).replace('.', ',') + ' zł' : ''}</td></tr>`).join('')}
       </tbody></table></div><p class="small mute">${t('pz_total', { n: pz.items.length, fresh: newCount })}</p>` : `<div class="card mute">${t('pz_empty')}</div>`}
     ${r.url ? `<h2>${t('pz_report')}</h2><div class="rep-frame"><iframe src="${esc(r.url)}" allowfullscreen loading="lazy" title="${esc(r.title)}"></iframe></div>` : ''}`;
+  if ($('#pzrem', el)) {
+    const rc = await api('GET', '/api/przecena/remind');
+    $('#pzrem', el).innerHTML = `<label><input type="checkbox" id="pzron" ${rc.on ? 'checked' : ''}> ${t('pz_remind')}</label><input type="time" id="pzrt" value="${rc.time}"><button class="sm" id="pzrs">${t('save')}</button>`;
+    $('#pzrs', el).onclick = async () => { await api('PUT', '/api/przecena/remind', { on: $('#pzron', el).checked, time: $('#pzrt', el).value }); toast(t('saved')); };
+  }
   if ($('#pzfile', el)) $('#pzfile', el).onchange = async e => {
     const f = e.target.files[0]; if (!f) return;
     const box = $('#pzres', el); box.innerHTML = '<div class="loading">…</div>';
