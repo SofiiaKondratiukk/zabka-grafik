@@ -66,6 +66,7 @@ app.get('/api/me', wrap(req => {
   const locs = L.locationsFor(req.user).map(l => ({ ...l, is_admin: L.isAdmin(req.user, l.id), admin_name: L.userName(l.admin_id), deputy_name: L.userName(l.deputy_id) }));
   return { user: safeUser(req.user), locations: locs, can_rates: L.canRates(req.user), unread: get('SELECT count(*) c FROM notifications WHERE user_id=? AND read=0', req.user.id).c,
     reports: require('./reportembed').menuFor(locs.map(l => l.id)),
+    expired: require('./przecena').menuExpired(locs.map(l => l.id)),
     tg: { enabled: tgEnabled(), bot: getBotUsername(), configured: require('./telegram').status().configured }, now: L.warsawNow() };
 }));
 app.post('/api/me/lang', wrap(req => { const lang = req.body.lang === 'pl' ? 'pl' : 'uk'; run('UPDATE users SET lang=? WHERE id=?', lang, req.user.id); return { ok: true }; }));
@@ -662,10 +663,10 @@ const avail = require('./avail'); avail.register(app, { wrap, needAdmin, needMem
 require('./tasks').register(app, { wrap, needAdmin, needMember, bad, forbid }); // завдання від адміністратора
 require('./telegram').register(app, { wrap, bad, forbid, L }); // Telegram-бот: webhook, токен, тест
 require('./vacations').register(app, { wrap, needMember, bad, forbid }); // урлопи
-require('./hooks').register(app, { wrap, bad, forbid });
-require('./reportembed').register(app, { wrap, needMember, bad, forbid });
-require('./przecena').register(app, { wrap, needMember, bad, forbid }); // пшецена: список товарів з файлу, завдання для нових // звіт Power BI у програмі (вкладка «Пшецена»)
- // вхідні сигнали (Power BI → завдання) // премії, штрафи, мінуси, аванси
+
+require('./reportembed').register(app, { wrap, needMember, bad, forbid }); // назва вкладки «Пшецена» і зміна для завдань
+require('./przecena').register(app, { wrap, needMember, bad, forbid }); // пшецена і прострочка: списки товарів з файлів, завдання для нових
+// премії, штрафи, мінуси, аванси — див. server/money.js
 
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, '..', 'public', 'index.html')));
 
