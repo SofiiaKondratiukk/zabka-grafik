@@ -191,6 +191,18 @@ function status() {
     webhook: state.webhook, checkedAt: state.checkedAt, public_url: publicUrl() };
 }
 const send = (chatId, text) => state.ok ? call('sendMessage', { chat_id: chatId, text }) : Promise.resolve(null);
+/** Надіслати фото (Buffer) з підписом. */
+async function sendPhoto(chatId, buffer, mime, caption) {
+  if (!state.ok) return null;
+  try {
+    const fd = new FormData();
+    fd.append('chat_id', String(chatId));
+    if (caption) fd.append('caption', String(caption).slice(0, 1000));
+    fd.append('photo', new Blob([buffer], { type: mime || 'image/jpeg' }), 'photo.jpg');
+    const r = await fetch(`https://api.telegram.org/bot${token()}/sendPhoto`, { method: 'POST', body: fd });
+    return await r.json();
+  } catch (e) { console.error('telegram sendPhoto: network error'); return null; }
+}
 const username = () => state.username || DEFAULT_USERNAME;
 
 function start() {
@@ -198,4 +210,4 @@ function start() {
   setInterval(() => { if (token()) init(); }, 30 * 60 * 1000); // повторна перевірка токена й webhook
 }
 
-module.exports = { register, start, init, status, send, username, rememberUrl };
+module.exports = { register, start, init, status, send, sendPhoto, username, rememberUrl };

@@ -10,7 +10,7 @@ const reports = require('./reports');
 const exporter = require('./export');
 
 const app = express();
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: '12mb' })); // фото до завдань і файли звітів
 app.use(express.static(path.join(__dirname, '..', 'public'), { index: 'index.html' }));
 
 // ---------- helpers ----------

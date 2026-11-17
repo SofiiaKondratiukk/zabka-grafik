@@ -13,7 +13,39 @@ CREATE TABLE IF NOT EXISTS tasks (
   created_by INTEGER, created_at TEXT DEFAULT (datetime('now')), updated_by INTEGER, updated_at TEXT,
   notified TEXT DEFAULT '[]', deleted INTEGER NOT NULL DEFAULT 0);
 CREATE INDEX IF NOT EXISTS ix_tasks ON tasks(location_id, date);
+CREATE TABLE IF NOT EXISTS task_photos (id INTEGER PRIMARY KEY, task_id INTEGER NOT NULL, kind TEXT NOT NULL, mime TEXT, data BLOB NOT NULL,
+  created_by INTEGER, created_at TEXT DEFAULT (datetime('now')));
+CREATE INDEX IF NOT EXISTS ix_task_photos ON task_photos(task_id);
 `);
+try { db.exec('ALTER TABLE tasks ADD COLUMN photo_required INTEGER NOT NULL DEFAULT 0'); } catch (_) { /* уже є */ }
+
+/* ---- фото до завдань: kind = 'admin' (від адміністратора) | 'proof' (підтвердження від працівника) ---- */
+const MAX_PHOTOS = 5, MAX_BYTES = 3 * 1024 * 1024;
+function savePhotos(taskId, kind, photos, userId, t) {
+  const list = Array.isArray(photos) ? photos : [];
+  const have = get('SELECT count(*) c FROM task_photos WHERE task_id=? AND kind=?', taskId, kind).c;
+  if (have + list.length > MAX_PHOTOS) throw Object.assign(new Error(t('err_photo_count', { n: MAX_PHOTOS })), { status: 400 });
+  const ids = [];
+  for (const p of list) {
+    const mime = /^image\/(jpeg|png|webp)$/.test(p && p.mime) ? p.mime : 'image/jpeg';
+    const buf = Buffer.from(String((p && p.data) || '').replace(/^data:[^,]+,/, ''), 'base64');
+    if (!buf.length) continue;
+    if (buf.length > MAX_BYTES) throw Object.assign(new Error(t('err_photo_big')), { status: 400 });
+    ids.push(Number(run('INSERT INTO task_photos(task_id,kind,mime,data,created_by) VALUES(?,?,?,?,?)', taskId, kind, mime, buf, userId).lastInsertRowid));
+  }
+  return ids;
+}
+const photosOf = taskId => all('SELECT id, kind, created_by, created_at FROM task_photos WHERE task_id=? ORDER BY id', taskId);
+/** Надіслати фото в Telegram тим, хто отримує сповіщення про завдання. */
+function sendPhotosTg(userIds, photoIds, caption) {
+  const tg = require('./telegram');
+  for (const uid of userIds) {
+    const u = get('SELECT * FROM users WHERE id=? AND active=1', uid); if (!u || !u.tg_chat_id) continue;
+    let prefs = {}; try { prefs = JSON.parse(u.notify || '{}'); } catch (_) {}
+    if (prefs.task === false) continue;
+    photoIds.forEach((pid, i) => { const ph = get('SELECT * FROM task_photos WHERE id=?', pid); if (ph) tg.sendPhoto(u.tg_chat_id, ph.data, ph.mime, i === 0 ? caption : ''); });
+  }
+}
 
 const SLOTS = ['s1', 's2', 'rs', 'dl'];
 const tFor = uid => { const u = get('SELECT lang FROM users WHERE id=?', uid); return (k, p) => tr((u && u.lang) || 'uk', k, p); };
@@ -49,7 +81,8 @@ function view(task, t) {
   const rec = recipients(task);
   return { ...task, due: task.due != null ? L.hm(task.due) : null, location: locName(task.location_id), target_label: targetLabel(task, t),
     recipients: rec.map(r => ({ user_id: r.user_id, name: L.userName(r.user_id) })), overdue: overdue(task, rec),
-    created_name: L.userName(task.created_by), updated_name: L.userName(task.updated_by), done_name: L.userName(task.done_by) };
+    created_name: L.userName(task.created_by), updated_name: L.userName(task.updated_by), done_name: L.userName(task.done_by),
+    photo_required: !!task.photo_required, photos: photosOf(task.id) };
 }
 
 /** Сповіщення працівникам на початку їхньої зміни (або одразу, якщо зміна вже йде). */
@@ -61,7 +94,9 @@ function dispatch() {
     for (const r of recipients(task)) {
       if (sent.includes(r.user_id) || now.min < r.start || now.min >= r.end) continue;
       const t = tFor(r.user_id);
-      notify(r.user_id, t('n_task', { loc: locName(task.location_id), text: task.text, due: task.due != null ? ' ' + t('tk_until', { t: L.hm(task.due) }) : '' }), 'task');
+      notify(r.user_id, t('n_task', { loc: locName(task.location_id), text: task.text, due: task.due != null ? ' ' + t('tk_until', { t: L.hm(task.due) }) : '' }) + (task.photo_required ? '\n' + t('tk_photo_needed') : ''), 'task');
+      const adminPh = all("SELECT id FROM task_photos WHERE task_id=? AND kind='admin' ORDER BY id", task.id).map(x => x.id);
+      if (adminPh.length) sendPhotosTg([r.user_id], adminPh, '📎 ' + task.text.slice(0, 200));
       sent.push(r.user_id); changed = true;
     }
     if (changed) run('UPDATE tasks SET notified=? WHERE id=?', JSON.stringify(sent), task.id);
@@ -84,7 +119,8 @@ function register(app, h) {
     const text = String(b.text ?? old?.text ?? '').trim(); if (!text) bad(t('err_task_text')); if (text.length > 500) bad(t('err_too_long'));
     let due = b.due === undefined ? (old ? old.due : null) : (b.due ? L.parseHM(b.due) : null);
     if (due != null && isNaN(due)) bad(t('err_time_format'));
-    return { location_id: locId, date, target, slot, user_id: userId, text, due };
+    const photo_required = b.photo_required === undefined ? (old ? old.photo_required : 0) : (b.photo_required ? 1 : 0);
+    return { location_id: locId, date, target, slot, user_id: userId, text, due, photo_required };
   };
   const loadPending = (req, id) => {
     const task = get('SELECT * FROM tasks WHERE id=? AND deleted=0', Number(id)); if (!task) bad('not found');
@@ -109,8 +145,9 @@ function register(app, h) {
   app.post('/api/tasks', wrap(req => {
     needAnyAdmin(req);
     const v = parse(req, req.body);
-    const r = run('INSERT INTO tasks(location_id,date,target,slot,user_id,text,due,created_by) VALUES(?,?,?,?,?,?,?,?)', v.location_id, v.date, v.target, v.slot, v.user_id, v.text, v.due, req.user.id);
+    const r = run('INSERT INTO tasks(location_id,date,target,slot,user_id,text,due,created_by,photo_required) VALUES(?,?,?,?,?,?,?,?,?)', v.location_id, v.date, v.target, v.slot, v.user_id, v.text, v.due, req.user.id, v.photo_required);
     const task = get('SELECT * FROM tasks WHERE id=?', Number(r.lastInsertRowid));
+    savePhotos(task.id, 'admin', req.body.photos, req.user.id, req.t);
     L.audit(req.user, v.location_id, 'task_create', { id: task.id, date: v.date, for: targetLabel(task, req.t), text: v.text, due: v.due != null ? L.hm(v.due) : '' });
     dispatch();
     return view(task, req.t);
@@ -120,8 +157,9 @@ function register(app, h) {
     const old = loadPending(req, req.params.id);
     const v = parse(req, req.body, old);
     const reset = v.date !== old.date || v.target !== old.target || v.slot !== old.slot || v.user_id !== old.user_id || v.location_id !== old.location_id;
-    run(`UPDATE tasks SET location_id=?, date=?, target=?, slot=?, user_id=?, text=?, due=?, updated_by=?, updated_at=datetime('now')${reset ? ", notified='[]'" : ''} WHERE id=?`,
-      v.location_id, v.date, v.target, v.slot, v.user_id, v.text, v.due, req.user.id, old.id);
+    run(`UPDATE tasks SET location_id=?, date=?, target=?, slot=?, user_id=?, text=?, due=?, photo_required=?, updated_by=?, updated_at=datetime('now')${reset ? ", notified='[]'" : ''} WHERE id=?`,
+      v.location_id, v.date, v.target, v.slot, v.user_id, v.text, v.due, v.photo_required, req.user.id, old.id);
+    savePhotos(old.id, 'admin', req.body.photos, req.user.id, req.t);
     const task = get('SELECT * FROM tasks WHERE id=?', old.id);
     L.audit(req.user, v.location_id, 'task_edit', { id: old.id, from: `${old.date} ${targetLabel(old, req.t)}: ${old.text}`, to: `${v.date} ${targetLabel(task, req.t)}: ${v.text}` });
     dispatch();
@@ -152,10 +190,30 @@ function register(app, h) {
     const status = req.body.done ? 'done' : 'failed';
     const comment = String(req.body.comment || '').trim().slice(0, 300) || null;
     if (status === 'failed' && !comment) bad(req.t('err_comment_required'));
+    const proofCount = (Array.isArray(req.body.photos) ? req.body.photos.filter(p => p && p.data).length : 0);
+    if (status === 'done' && task.photo_required && !proofCount) bad(req.t('err_task_photo_required'));
+    const proofIds = savePhotos(task.id, 'proof', req.body.photos, req.user.id, req.t);
     run("UPDATE tasks SET status=?, result_comment=?, done_by=?, done_at=datetime('now') WHERE id=?", status, comment, req.user.id, task.id);
     L.audit(req.user, task.location_id, status === 'done' ? 'task_done' : 'task_failed', { id: task.id, text: task.text, comment });
     const l = get('SELECT * FROM locations WHERE id=?', task.location_id);
-    notifyAdmins(task.location_id, tFor(l.admin_id || req.user.id)(status === 'done' ? 'n_task_done' : 'n_task_failed', { name: req.user.name, text: task.text, date: task.date, comment: comment ? ` — ${comment}` : '' }), 'task', req.user.id);
+    notifyAdmins(task.location_id, tFor(l.admin_id || req.user.id)(status === 'done' ? 'n_task_done' : 'n_task_failed', { name: req.user.name, text: task.text, date: task.date, comment: comment ? ` — ${comment}` : '' }) + (proofIds.length ? ` 📷 ${proofIds.length}` : ''), 'task', req.user.id);
+    if (proofIds.length) { const ids = require('./notify').adminRecipients(task.location_id); ids.delete(req.user.id); sendPhotosTg([...ids], proofIds, `📷 ${req.user.name}: ${task.text.slice(0, 200)}`); }
+    return { ok: true };
+  }));
+
+  // фото: перегляд (адміністратор або працівник цієї локації) і видалення фото адміністратора, поки завдання не виконане
+  app.get('/api/tasks/photo/:id', wrap((req, res) => {
+    const ph = get('SELECT p.*, t.location_id FROM task_photos p JOIN tasks t ON t.id=p.task_id WHERE p.id=?', Number(req.params.id)); if (!ph) bad('not found');
+    needMember(req, ph.location_id);
+    res.setHeader('Content-Type', ph.mime || 'image/jpeg'); res.setHeader('Cache-Control', 'private, max-age=86400');
+    res.end(Buffer.from(ph.data));
+  }));
+  app.delete('/api/tasks/photo/:id', wrap(req => {
+    needAnyAdmin(req);
+    const ph = get('SELECT p.*, t.location_id, t.status FROM task_photos p JOIN tasks t ON t.id=p.task_id WHERE p.id=?', Number(req.params.id)); if (!ph) bad('not found');
+    if (ph.kind !== 'admin' || ph.status !== 'pending') bad(req.t('err_task_done'));
+    run('DELETE FROM task_photos WHERE id=?', ph.id);
+    L.audit(req.user, ph.location_id, 'task_edit', { id: ph.task_id, photo: 'removed' });
     return { ok: true };
   }));
 

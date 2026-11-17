@@ -820,6 +820,32 @@ async function pageDisposition(el) {
   });
 }
 
+// ---------------- ФОТО ДО ЗАВДАНЬ ----------------
+/** Стиснути фото на телефоні перед надсиланням (до 1280 px, JPEG). */
+function compressPhoto(file, max = 1280, q = 0.78) {
+  return new Promise((ok, bad) => {
+    const url = URL.createObjectURL(file); const img = new Image();
+    img.onload = () => { const k = Math.min(1, max / Math.max(img.width, img.height)); const c = document.createElement('canvas'); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(url); ok({ mime: 'image/jpeg', data: c.toDataURL('image/jpeg', q).split(',')[1] }); };
+    img.onerror = () => { URL.revokeObjectURL(url); bad(new Error(t('err_photo_read'))); };
+    img.src = url;
+  });
+}
+const photoThumbs = (photos, kind, delOk) => (photos || []).filter(p => !kind || p.kind === kind).map(p => `<span class="tk-ph-wrap"><img class="tk-ph" src="/api/tasks/photo/${p.id}" data-ph="${p.id}" alt="">${delOk ? `<button type="button" class="tk-ph-del" data-phdel="${p.id}">✕</button>` : ''}</span>`).join('');
+/** Вибір фото з попереднім переглядом; повертає функцію, що віддає стиснуті фото. */
+function photoPicker(box, { camera } = {}) {
+  const files = [];
+  box.innerHTML = `<label class="tk-ph-add">📷 ${t('tk_add_photo')}<input type="file" accept="image/*" ${camera ? 'capture="environment"' : ''} multiple style="display:none"></label><span class="tk-ph-prev"></span>`;
+  const draw = () => { $('.tk-ph-prev', box).innerHTML = files.map((f, i) => `<span class="tk-ph-wrap"><img class="tk-ph" src="${URL.createObjectURL(f)}" alt=""><button type="button" class="tk-ph-del" data-i="${i}">✕</button></span>`).join('');
+    $$('.tk-ph-del', box).forEach(b => b.onclick = () => { files.splice(Number(b.dataset.i), 1); draw(); }); };
+  $('input', box).onchange = e => { for (const f of e.target.files) if (files.length < 5) files.push(f); e.target.value = ''; draw(); };
+  return { count: () => files.length, get: () => Promise.all(files.map(f => compressPhoto(f))) };
+}
+/** Клік по мініатюрі — фото на весь екран. */
+function bindPhotoView(root) {
+  $$('img[data-ph]', root).forEach(img => img.onclick = e => { e.stopPropagation(); modal(`<img src="/api/tasks/photo/${img.dataset.ph}" style="width:100%;border-radius:10px" alt=""><p style="text-align:center"><a href="/api/tasks/photo/${img.dataset.ph}" target="_blank" rel="noopener" class="small">${t('report_open_new')} ↗</a></p>`, true); });
+}
+
 // ---------------- ЗАВДАННЯ ВІД АДМІНІСТРАТОРА ----------------
 const tkStatus = x => x.status === 'done' ? `<span class="pill approved">✓ ${t('tk_done')}</span>` : x.status === 'failed' ? `<span class="pill rejected">✕ ${t('tk_failed')}</span>` : `<span class="pill pending">${t('tk_pending')}</span>`;
 /** Блок на головному екрані працівника. */
@@ -829,13 +855,20 @@ async function myTasksBlock(box) {
   box.innerHTML = `<div class="card" style="border-color:var(--blue)"><h2 style="margin-top:0">📋 ${t('tasks_from_admin')}</h2>${list.map(x => `<div class="taskitem" data-id="${x.id}" style="border-left:3px solid var(--blue);padding-left:10px;margin:10px 0">
       <div class="row"><b class="grow">${esc(x.text)}</b>${tkStatus(x)}</div>
       <div class="small mute">${esc(x.target_label)}${x.due ? ' · ' + t('tk_until', { t: x.due }) : ''} · ${esc(x.created_name)}</div>
-      ${x.status === 'pending' ? `<input class="tkc" maxlength="300" placeholder="${t('tk_comment_ph')}" style="width:100%;margin-top:6px">
+      ${x.photos.some(p => p.kind === 'admin') ? `<div class="tk-phs">${photoThumbs(x.photos, 'admin')}</div>` : ''}
+      ${x.photo_required && x.status === 'pending' ? `<div class="small" style="color:var(--blue);margin-top:4px">📷 ${t('tk_photo_required_badge')}</div>` : ''}
+      ${x.status === 'pending' ? `<div class="tk-pick" style="margin-top:6px"></div><input class="tkc" maxlength="300" placeholder="${t('tk_comment_ph')}" style="width:100%;margin-top:6px">
         <div class="row" style="margin-top:6px"><button class="pri sm tkok">✓ ${t('tk_mark_done')}</button><button class="danger sm tkno">✕ ${t('tk_mark_failed')}</button></div><div class="tkerr"></div>`
-        : `<div class="small">${esc(x.done_name)}, ${lts(x.done_at)}${x.result_comment ? ' — ' + esc(x.result_comment) : ''}</div>`}</div>`).join('')}</div>`;
+        : `<div class="small">${esc(x.done_name)}, ${lts(x.done_at)}${x.result_comment ? ' — ' + esc(x.result_comment) : ''}</div>${x.photos.some(p => p.kind === 'proof') ? `<div class="tk-phs">${photoThumbs(x.photos, 'proof')}</div>` : ''}`}</div>`).join('')}</div>`;
+  bindPhotoView(box);
   $$('.taskitem', box).forEach(it => {
+    const x = list.find(y => y.id === Number(it.dataset.id));
+    const picker = $('.tk-pick', it) ? photoPicker($('.tk-pick', it), { camera: true }) : null;
     const send = async done => {
-      try { await api('POST', `/api/tasks/${it.dataset.id}/result`, { done, comment: $('.tkc', it).value }); toast(t('saved')); myTasksBlock(box); }
-      catch (e) { $('.tkerr', it).innerHTML = errBox(e); }
+      if (done && x.photo_required && picker && !picker.count()) { $('.tkerr', it).innerHTML = `<div class="warnbox">📷 ${t('err_task_photo_required')}</div>`; return; }
+      const btns = $$('button', it); btns.forEach(b => b.disabled = true);
+      try { const photos = picker ? await picker.get() : []; await api('POST', `/api/tasks/${it.dataset.id}/result`, { done, comment: $('.tkc', it).value, photos }); toast(t('saved')); myTasksBlock(box); }
+      catch (e) { btns.forEach(b => b.disabled = false); $('.tkerr', it).innerHTML = errBox(e); }
     };
     if ($('.tkok', it)) { $('.tkok', it).onclick = () => send(true); $('.tkno', it).onclick = () => send(false); }
   });
@@ -850,6 +883,8 @@ function taskModal(task, done) {
     <label class="f" id="tul"><span>${t('worker')}</span><select id="tu"></select></label>
     <label class="f"><span>${t('tk_text')}</span><textarea id="tx" maxlength="500" placeholder="${t('tk_text_ph')}">${esc(x.text)}</textarea></label>
     <label class="f"><span>${t('tk_due_opt')}</span><input type="time" id="tdue" value="${x.due || ''}"></label>
+    <label class="f"><input type="checkbox" id="tpr" ${x.photo_required ? 'checked' : ''}> 📷 ${t('tk_require_photo')}</label>
+    <div class="f"><span class="mute small">${t('tk_admin_photos')}</span><div class="tk-phs">${photoThumbs(x.photos, 'admin', true)}</div><div id="tpick"></div></div>
     <p class="small mute">${t('tk_help')}</p><div id="terr"></div>
     <div class="row end"><button onclick="closeModal()">${t('cancel')}</button><button class="pri" id="tok">${t('save')}</button></div>`);
   let target = x.target;
@@ -858,10 +893,15 @@ function taskModal(task, done) {
   $$('#tt button', b).forEach(bb => bb.onclick = () => { target = bb.dataset.k; sync(); });
   $('#tl', b).onchange = loadWorkers; loadWorkers(); sync();
   $('#tok', b).onclick = async () => {
-    const body = { location_id: Number($('#tl', b).value), date: $('#td', b).value, target, slot: $('#ts', b).value, user_id: Number($('#tu', b).value), text: $('#tx', b).value, due: $('#tdue', b).value || null };
+    const body = { location_id: Number($('#tl', b).value), date: $('#td', b).value, target, slot: $('#ts', b).value, user_id: Number($('#tu', b).value), text: $('#tx', b).value, due: $('#tdue', b).value || null, photo_required: $('#tpr', b).checked };
+    $('#tok', b).disabled = true;
+    try { body.photos = await picker.get(); } catch (e) { $('#tok', b).disabled = false; $('#terr', b).innerHTML = errBox(e); return; }
     try { if (task) await api('PUT', `/api/tasks/${task.id}`, body); else await api('POST', '/api/tasks', body); closeModal(); toast(t('saved')); done && done(); }
-    catch (e) { $('#terr', b).innerHTML = errBox(e); }
+    catch (e) { $('#tok', b).disabled = false; $('#terr', b).innerHTML = errBox(e); }
   };
+  const picker = photoPicker($('#tpick', b));
+  bindPhotoView(b);
+  $$('[data-phdel]', b).forEach(btn => btn.onclick = async () => { if (!confirm(t('delete_q'))) return; await api('DELETE', `/api/tasks/photo/${btn.dataset.phdel}`); btn.closest('.tk-ph-wrap').remove(); });
 }
 const TF = { loc: null, from: null, to: null, user: '', status: '' };
 async function pageTasks(el) {
@@ -880,11 +920,15 @@ async function pageTasks(el) {
     <div class="card list">${list.map(x => `<div class="item"><div class="grow">
         <div class="row">${x.overdue ? '<span class="excl" title="' + t('tk_overdue') + '">!</span>' : ''}<b class="grow ${x.overdue ? 'red' : ''}">${esc(x.text)}</b>${tkStatus(x)}</div>
         <div class="small">${ddmm(x.date)} ${t('dow_' + dow(x.date))} · ${esc(x.location)} · ${esc(x.target_label)}${x.recipients.length && x.target !== 'user' ? ' → ' + x.recipients.map(r => esc(r.name)).join(', ') : ''}${x.due ? ' · ' + t('tk_until', { t: x.due }) : ''}</div>
+        ${x.photo_required ? `<div class="small" style="color:var(--blue)">📷 ${t('tk_photo_required_badge')}</div>` : ''}
+        ${x.photos.some(p => p.kind === 'admin') ? `<div class="tk-phs">${photoThumbs(x.photos, 'admin')}</div>` : ''}
         ${x.status !== 'pending' ? `<div class="small">${x.status === 'done' ? '✓' : '✕'} ${esc(x.done_name)}, ${lts(x.done_at)}${x.result_comment ? ' — 💬 ' + esc(x.result_comment) : ''}</div>` : ''}
+        ${x.photos.some(p => p.kind === 'proof') ? `<div class="small mute">${t('tk_proof_photos')}:</div><div class="tk-phs">${photoThumbs(x.photos, 'proof')}</div>` : ''}
         ${x.overdue ? `<div class="small red">! ${t('tk_overdue')}</div>` : ''}
         <div class="small mute">${t('tk_created')}: ${esc(x.created_name)}, ${lts(x.created_at)}${x.updated_by ? ` · ${t('tk_edited')}: ${esc(x.updated_name)}, ${lts(x.updated_at)}` : ''}</div></div>
       ${x.status === 'pending' ? `<div class="row" style="flex-direction:column;gap:4px"><button class="sm" data-edit="${x.id}">✎</button><button class="sm danger" data-del="${x.id}">✕</button></div>` : ''}</div>`).join('') || `<p class="mute">${t('no_data')}</p>`}</div>`;
   const reload = () => pageTasks(el);
+  bindPhotoView(el);
   $('#tnew', el).onclick = () => taskModal(null, reload);
   $('#fl', el).onchange = e => { TF.loc = e.target.value; reload(); };
   $('#ff', el).onchange = e => { TF.from = e.target.value; reload(); };
